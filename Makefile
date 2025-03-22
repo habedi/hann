@@ -9,6 +9,9 @@ ECHO := @echo
 DATA_DIR := "examples/data"
 DEBUG_HANN := 1
 
+# List of packages to test (excluding examples/cmd)
+PACKAGES := $(shell $(GO) list ./... | grep -v examples/cmd)
+
 # Adjust PATH if necessary (append /snap/bin if not present)
 PATH := $(if $(findstring /snap/bin,$(PATH)),$(PATH),/snap/bin:$(PATH))
 
@@ -27,8 +30,7 @@ SHELL := /bin/bash
 
 .PHONY: help
 help: ## Show the help message for each target (command)
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; \
-	  {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: format
 format: ## Format Go files
@@ -38,7 +40,7 @@ format: ## Format Go files
 .PHONY: test
 test: format ## Run the tests
 	$(ECHO) "Running the tests..."
-	@DEBUG_HANN=$(DEBUG_HANN) $(GO) test -v ./... --cover --coverprofile=$(COVER_PROFILE) --race
+	@DEBUG_HANN=$(DEBUG_HANN) $(GO) test -v --cover --coverprofile=$(COVER_PROFILE) --race --count=1 ${PACKAGES}
 
 .PHONY: showcov
 showcov: test ## Display test coverage report
