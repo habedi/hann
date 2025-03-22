@@ -99,3 +99,8 @@ lint: format ## Run the linters
 download-data: ## Download the datasets used in the examples
 	@echo "Downloading datasets..."
 	@$(SHELL) $(DATA_DIR)/download_datasets.sh $(DATA_DIR)
+
+.PHONY: run-examples
+run-examples: format ## Run the examples
+	@echo "Running the examples..."
+	@$(GO) run examples/cmd/hnsw.go
