@@ -70,26 +70,8 @@ func main() {
 		}
 		// Print only the summary results.
 		fmt.Printf("Query #%d:\n", i+1)
-		fmt.Printf(" -> Predicted:     %s\n", formatResults(results))
-		fmt.Printf(" -> Ground-truth:  %s\n", formatGroundTruth(gtNeighbors[i],
+		fmt.Printf(" -> Predicted:     %s\n", examples.FormatResults(results))
+		fmt.Printf(" -> Ground-truth:  %s\n", examples.FormatGroundTruth(gtNeighbors[i],
 			gtDistances[i], k))
 	}
-}
-
-// formatResults returns a formatted string of neighbor results.
-func formatResults(results []core.Neighbor) string {
-	s := ""
-	for _, n := range results {
-		s += fmt.Sprintf("id=%d (dist=%.3f) ", n.ID, n.Distance)
-	}
-	return s
-}
-
-// formatGroundTruth returns a formatted string of ground-truth neighbor results.
-func formatGroundTruth(neighbors []int, distances []float64, k int) string {
-	s := ""
-	for j := 0; j < k && j < len(neighbors); j++ {
-		s += fmt.Sprintf("id=%d (dist=%.3f) ", neighbors[j], distances[j])
-	}
-	return s
 }
