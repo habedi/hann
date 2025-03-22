@@ -170,6 +170,23 @@ func (r *RPTIndex) Add(id int, vector []float32) error {
 	return nil
 }
 
+// BulkAdd inserts multiple vectors into the index.
+func (r *RPTIndex) BulkAdd(vectors map[int][]float32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, vector := range vectors {
+		if len(vector) != r.dimension {
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), r.dimension, id)
+		}
+		if _, exists := r.points[id]; exists {
+			return fmt.Errorf("id %d already exists", id)
+		}
+		r.points[id] = vector
+	}
+	r.dirty = true
+	return nil
+}
+
 // Delete removes the vector with the given id.
 func (r *RPTIndex) Delete(id int) error {
 	r.mu.Lock()
@@ -178,6 +195,19 @@ func (r *RPTIndex) Delete(id int) error {
 		return fmt.Errorf("id %d not found", id)
 	}
 	delete(r.points, id)
+	r.dirty = true
+	return nil
+}
+
+// BulkDelete removes multiple vectors from the index.
+func (r *RPTIndex) BulkDelete(ids []int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, id := range ids {
+		if _, exists := r.points[id]; exists {
+			delete(r.points, id)
+		}
+	}
 	r.dirty = true
 	return nil
 }
@@ -193,6 +223,23 @@ func (r *RPTIndex) Update(id int, vector []float32) error {
 		return fmt.Errorf("id %d not found", id)
 	}
 	r.points[id] = vector
+	r.dirty = true
+	return nil
+}
+
+// BulkUpdate updates multiple vectors in the index.
+func (r *RPTIndex) BulkUpdate(updates map[int][]float32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, vector := range updates {
+		if len(vector) != r.dimension {
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), r.dimension, id)
+		}
+		if _, exists := r.points[id]; !exists {
+			return fmt.Errorf("id %d not found", id)
+		}
+		r.points[id] = vector
+	}
 	r.dirty = true
 	return nil
 }
@@ -253,39 +300,6 @@ func (r *RPTIndex) Search(query []float32, k int, distance core.DistanceFunc) ([
 		k = len(neighbors)
 	}
 	return neighbors[:k], nil
-}
-
-// RangeSearch returns all neighbor ids within the specified radius.
-func (r *RPTIndex) RangeSearch(query []float32, radius float64, distance core.DistanceFunc) ([]int, error) {
-	r.mu.RLock()
-	if len(query) != r.dimension {
-		r.mu.RUnlock()
-		return nil, fmt.Errorf("query dimension %d does not match index dimension %d", len(query), r.dimension)
-	}
-	if len(r.points) == 0 {
-		r.mu.RUnlock()
-		return nil, errors.New("index is empty")
-	}
-	if r.dirty {
-		r.mu.RUnlock()
-		r.mu.Lock()
-		if r.dirty {
-			r.buildTree()
-		}
-		r.mu.Unlock()
-		r.mu.RLock()
-	}
-	candidateIDs := searchTree(r.tree, query, r.dimension)
-	r.mu.RUnlock()
-
-	var ids []int
-	for _, id := range candidateIDs {
-		vec := r.points[id]
-		if distance(query, vec) <= radius {
-			ids = append(ids, id)
-		}
-	}
-	return ids, nil
 }
 
 // Stats returns metadata about the index.
@@ -361,7 +375,7 @@ func (r *RPTIndex) Load(path string) error {
 	return dec.Decode(r)
 }
 
-// Verify RPTIndex implements the core.Index interface.
+// Verify that RPTIndex implements the core.Index interface.
 var _ core.Index = (*RPTIndex)(nil)
 
 func init() {

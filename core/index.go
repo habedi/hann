@@ -1,22 +1,28 @@
 package core
 
-// Index represents a generic, production-grade ANN index.
+// Index represents a generic interface for similarity search indexes.
 type Index interface {
 
 	// Add inserts a vector with a given id into the index.
 	Add(id int, vector []float32) error
 
+	// BulkAdd inserts multiple vectors into the index.
+	BulkAdd(vectors map[int][]float32) error
+
 	// Delete removes the vector with the given id from the index.
 	Delete(id int) error
+
+	// BulkDelete removes multiple vectors from the index.
+	BulkDelete(ids []int) error
 
 	// Update modifies the vector associated with the given id.
 	Update(id int, vector []float32) error
 
+	// BulkUpdate updates multiple vectors in the index.
+	BulkUpdate(updates map[int][]float32) error
+
 	// Search returns the ids and distances of the k nearest neighbors for a query vector.
 	Search(query []float32, k int, distance DistanceFunc) ([]Neighbor, error)
-
-	// RangeSearch returns all neighbor ids within the specified radius.
-	RangeSearch(query []float32, radius float64, distance DistanceFunc) ([]int, error)
 
 	// Stats returns metadata about the index, such as count and dimensionality.
 	Stats() IndexStats

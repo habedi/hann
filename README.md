@@ -14,20 +14,22 @@ It provides a collection of index data structures for efficient similarity searc
 
 ### Supported Indexes
 
-- [Hierarchical Navigable Small World Graph (HNSW)](https://arxiv.org/abs/1603.09320)
-- [Product Quantization with Inverted File (PQIVF)](https://ieeexplore.ieee.org/document/5432202)
-- [Random Projection Tree (RPT)](https://dl.acm.org/doi/10.1145/1374376.1374452)
+| # | Index                                                                                           | Space Complexity                                                                                        | Build Complexity                                                                              | Query Complexity                                             |
+|---|-------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|--------------------------------------------------------------|
+| 1 | [Hierarchical Navigable Small World (HNSW)](https://arxiv.org/abs/1603.09320)                   | O(n · (d + M))<br>(n vectors of dimension d, plus O(M) links per vector)                                | ~O(n log n) average<br>(each insertion costs about O(M · L) where L is the number of levels)  | ~O(log n) average;<br>worst-case O(n)                        |
+| 2 | [Product Quantization with Inverted File (PQIVF)](https://ieeexplore.ieee.org/document/5432202) | O(n · d) for raw data, or O(n) when storing compressed PQ codes,<br>plus O(k · d) for cluster centroids | O(n · k · i) for clustering (with k clusters over i iterations),<br>plus linear encoding cost | Sublinear search<br>(roughly O(n / k) candidate comparisons) |
+| 3 | [Random Projection Trees (RPT)](https://dl.acm.org/doi/10.1145/1374376.1374452)                 | O(n) (storing tree nodes and projections)                                                               | O(n log n) (building a balanced tree using random projections)                                | O(log n) average                                             |
 
 ### Examples
 
 Check out the [examples](examples) directory for usage examples.
 
-| Index | Example File                          | Description                                                              |
-|-------|---------------------------------------|--------------------------------------------------------------------------|
-| 1     | [hnsw.go](examples/cmd/hnsw.go)       | Create and use an HNSW index: insert, delete, update, and search vectors |
-| 2     | [pqivf.go](examples/cmd/pqivf.go)     | Create and use a PQIVF index: insert, delete, update, and search vectors |
-| 3     | [rpt.go](examples/cmd/rpt.go)         | Create and use an RPT index: insert, delete, update, and search vectors  |
-| 4     | [load_data.go](examples/load_data.go) | Helper functions to load datasets for the examples                       |
+| # | Example File                          | Description                                                              |
+|---|---------------------------------------|--------------------------------------------------------------------------|
+| 1 | [hnsw.go](examples/cmd/hnsw.go)       | Create and use an HNSW index: insert, delete, update, and search vectors |
+| 2 | [pqivf.go](examples/cmd/pqivf.go)     | Create and use a PQIVF index: insert, delete, update, and search vectors |
+| 3 | [rpt.go](examples/cmd/rpt.go)         | Create and use an RPT index: insert, delete, update, and search vectors  |
+| 4 | [load_data.go](examples/load_data.go) | Helper functions to load datasets for the examples                       |
 
 ### Contributing
 

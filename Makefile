@@ -8,6 +8,7 @@ GO ?= go
 MAIN ?= ./main.go
 ECHO := @echo
 DATA_DIR := "examples/data"
+DEBUG_HANN := 1
 
 # Adjust PATH if necessary (append /snap/bin if not present)
 PATH := $(if $(findstring /snap/bin,$(PATH)),$(PATH),/snap/bin:$(PATH))
@@ -38,7 +39,7 @@ format: ## Format Go files
 .PHONY: test
 test: format ## Run the tests
 	$(ECHO) "Running the tests..."
-	@$(GO) test -v ./... --cover --coverprofile=$(COVER_PROFILE) --race
+	@DEBUG_HANN=$(DEBUG_HANN) $(GO) test -v ./... --cover --coverprofile=$(COVER_PROFILE) --race
 
 .PHONY: showcov
 showcov: test ## Display test coverage report
@@ -51,15 +52,6 @@ build: format ## Build the binary for the current platform
 	@$(GO) mod tidy
 	$(ECHO) "Building the project..."
 	@$(GO) build -o $(BINARY)
-
-.PHONY: build-macos
-build-macos: format ## Build a universal binary for macOS (x86_64 and arm64)
-	$(ECHO) "Building universal binary for macOS..."
-	mkdir -p bin
-	GOARCH=amd64 $(GO) build -o bin/$(BINARY_NAME)-x86_64 $(MAIN)
-	GOARCH=arm64 $(GO) build -o bin/$(BINARY_NAME)-arm64 $(MAIN)
-	@command -v lipo >/dev/null || { $(ECHO) "lipo not found. Please install Xcode command line tools."; exit 1; }
-	@lipo -create -output $(BINARY) bin/$(BINARY_NAME)-x86_64 bin/$(BINARY_NAME)-arm64
 
 .PHONY: run
 run: build ## Build and run the binary for the current platform
@@ -103,4 +95,4 @@ download-data: ## Download the datasets used in the examples
 .PHONY: run-examples
 run-examples: format ## Run the examples
 	@echo "Running the examples..."
-	@$(GO) run examples/cmd/hnsw.go
+	@DEBUG_HANN=$(DEBUG_HANN) $(GO) run examples/cmd/hnsw.go

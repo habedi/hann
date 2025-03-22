@@ -136,3 +136,49 @@ func parseValue[T int | float32 | float64](s string) (T, error) {
 		return zero, fmt.Errorf("unsupported type %T", zero)
 	}
 }
+
+// LoadTrainingVectors loads training vectors from "train.csv" in the specified directory.
+// It returns a map from id (row number) to the vector.
+func LoadTrainingVectors(dir string) (map[int][]float32, error) {
+	trainPath := filepath.Join(dir, "train.csv")
+	log.Info().Msgf("Loading training vectors from: %s", trainPath)
+	// reuse generic CSV reader (assumes header to skip)
+	vectors, err := readCSV[float32](trainPath, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load train.csv: %w", err)
+	}
+	m := make(map[int][]float32, len(vectors))
+	for id, vec := range vectors {
+		m[id] = vec
+	}
+	log.Info().Msgf("Loaded %d training vectors from %s", len(m), trainPath)
+	return m, nil
+}
+
+// LoadTestDataset loads the test vectors and ground-truth data from the specified directory.
+// It returns the test vectors, true neighbor IDs, and true distances.
+func LoadTestDataset(dir string) ([][]float32, [][]int, [][]float64, error) {
+	testPath := filepath.Join(dir, "test.csv")
+	neighborsPath := filepath.Join(dir, "neighbors.csv")
+	distancesPath := filepath.Join(dir, "distances.csv")
+
+	log.Info().Msgf("Loading test vectors from: %s", testPath)
+	testVectors, err := readCSV[float32](testPath, true)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load test.csv: %w", err)
+	}
+
+	log.Info().Msgf("Loading ground-truth neighbors from: %s", neighborsPath)
+	trueNeighbors, err := readCSV[int](neighborsPath, true)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load neighbors.csv: %w", err)
+	}
+
+	log.Info().Msgf("Loading ground-truth distances from: %s", distancesPath)
+	trueDistances, err := readCSV[float64](distancesPath, true)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load distances.csv: %w", err)
+	}
+
+	return testVectors, trueNeighbors, trueDistances, nil
+}

@@ -143,6 +143,43 @@ func (pq *PQIVFIndex) Add(id int, vector []float32) error {
 	return nil
 }
 
+// BulkAdd inserts multiple vectors into the index.
+func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+
+	for id, vector := range vectors {
+		if len(vector) != pq.dimension {
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), pq.dimension, id)
+		}
+		if _, exists := pq.idToCluster[id]; exists {
+			return fmt.Errorf("id %d already exists", id)
+		}
+
+		var cluster int
+		if len(pq.coarseCentroids) < pq.coarseK {
+			cluster = len(pq.coarseCentroids)
+			centroid := make([]float32, pq.dimension)
+			copy(centroid, vector)
+			pq.coarseCentroids = append(pq.coarseCentroids, centroid)
+			pq.clusterCounts[cluster] = 1
+		} else {
+			cluster, _ = pq.nearestCentroid(vector)
+			n := pq.clusterCounts[cluster]
+			centroid := pq.coarseCentroids[cluster]
+			for i := 0; i < pq.dimension; i++ {
+				centroid[i] = (centroid[i]*float32(n) + vector[i]) / float32(n+1)
+			}
+			pq.clusterCounts[cluster] = n + 1
+		}
+
+		pq.idToCluster[id] = cluster
+		entry := pqEntry{ID: id, Vector: vector}
+		pq.invertedLists[cluster] = append(pq.invertedLists[cluster], entry)
+	}
+	return nil
+}
+
 // Delete removes the vector with the given id from the index.
 func (pq *PQIVFIndex) Delete(id int) error {
 	pq.mu.Lock()
@@ -173,6 +210,33 @@ func (pq *PQIVFIndex) Delete(id int) error {
 	return nil
 }
 
+// BulkDelete removes multiple vectors from the index.
+func (pq *PQIVFIndex) BulkDelete(ids []int) error {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+
+	for _, id := range ids {
+		cluster, exists := pq.idToCluster[id]
+		if !exists {
+			// Skip if not found.
+			continue
+		}
+		entries, ok := pq.invertedLists[cluster]
+		if !ok {
+			continue
+		}
+		for i, entry := range entries {
+			if entry.ID == id {
+				pq.invertedLists[cluster] = append(entries[:i], entries[i+1:]...)
+				pq.clusterCounts[cluster]--
+				break
+			}
+		}
+		delete(pq.idToCluster, id)
+	}
+	return nil
+}
+
 // Update modifies the vector associated with the given id.
 // For simplicity, we remove the old entry and re-add the new one.
 func (pq *PQIVFIndex) Update(id int, vector []float32) error {
@@ -180,6 +244,16 @@ func (pq *PQIVFIndex) Update(id int, vector []float32) error {
 		return err
 	}
 	return pq.Add(id, vector)
+}
+
+// BulkUpdate updates multiple vectors in the index.
+func (pq *PQIVFIndex) BulkUpdate(updates map[int][]float32) error {
+	for id, vector := range updates {
+		if err := pq.Update(id, vector); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Search returns the k nearest neighbors (ids and distances) for a query vector.
@@ -197,7 +271,7 @@ func (pq *PQIVFIndex) Search(query []float32, k int, distance core.DistanceFunc)
 		return nil, fmt.Errorf("index is empty")
 	}
 
-	// Get the top candidate clusters (up to 3 or less if fewer clusters exist).
+	// Get the top candidate clusters (up to 3 or fewer if fewer clusters exist).
 	candidates := pq.nearestCentroids(query)
 	numCandidates := 3
 	if numCandidates > len(candidates) {
@@ -229,40 +303,6 @@ func (pq *PQIVFIndex) Search(query []float32, k int, distance core.DistanceFunc)
 		k = len(results)
 	}
 	return results[:k], nil
-}
-
-// RangeSearch returns all neighbor ids within the specified radius.
-// It first checks a few nearest candidate clusters before returning results.
-func (pq *PQIVFIndex) RangeSearch(query []float32, radius float64, distance core.DistanceFunc) ([]int, error) {
-	pq.mu.RLock()
-	defer pq.mu.RUnlock()
-
-	if len(query) != pq.dimension {
-		return nil, fmt.Errorf("query dimension %d does not match index dimension %d", len(query), pq.dimension)
-	}
-	if len(pq.invertedLists) == 0 {
-		return nil, fmt.Errorf("index is empty")
-	}
-
-	// Use the top 3 candidate clusters.
-	candidates := pq.nearestCentroids(query)
-	numCandidates := 3
-	if numCandidates > len(candidates) {
-		numCandidates = len(candidates)
-	}
-	var entries []pqEntry
-	for i := 0; i < numCandidates; i++ {
-		cluster := candidates[i].cluster
-		entries = append(entries, pq.invertedLists[cluster]...)
-	}
-
-	var ids []int
-	for _, entry := range entries {
-		if distance(query, entry.Vector) <= radius {
-			ids = append(ids, entry.ID)
-		}
-	}
-	return ids, nil
 }
 
 // Stats returns metadata about the index.

@@ -14,8 +14,8 @@ import (
 )
 
 func main() {
-	// Configure zerolog to write human-readable logs.
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	// Logging configuration is handled in core/log_config.go.
+	// Here we just set the console writer.
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	// Dataset configuration.
@@ -23,30 +23,40 @@ func main() {
 	root := "examples/data/nearest-neighbors-datasets"
 	datasetPath := filepath.Join(root, dataset)
 
-	log.Info().Msgf("Loading dataset: %s", dataset)
+	// Use fmt.Printf to output summary information regardless of logging level.
+	fmt.Printf("Loading dataset: %s\n", dataset)
 	start := time.Now()
 
-	// Create HNSW index with dimension and parameters.
+	// Create HNSW index.
 	dimension := 784
 	M := 16
 	ef := 64
 	index := hnsw.NewHNSW(dimension, M, ef)
-	log.Info().Msgf("Created HNSW index (dimension=%d, M=%d, ef=%d)", dimension, M, ef)
+	fmt.Printf("Created HNSW index (dimension=%d, M=%d, ef=%d)\n", dimension, M, ef)
 
-	// Load training vectors into index and get test set + ground truth.
-	testVectors, gtNeighbors, gtDistances, err := examples.LoadDataset(index, datasetPath)
+	// Load training vectors and BulkAdd.
+	trainingVectors, err := examples.LoadTrainingVectors(datasetPath)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to load dataset")
+		log.Fatal().Err(err).Msg("Failed to load training vectors")
+	}
+	if err := index.BulkAdd(trainingVectors); err != nil {
+		log.Fatal().Err(err).Msg("BulkAdd failed")
+	}
+
+	// Load test dataset.
+	testVectors, gtNeighbors, gtDistances, err := examples.LoadTestDataset(datasetPath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to load test dataset")
 	}
 
 	stats := index.Stats()
-	log.Info().Msgf("Indexed %d vectors (%d dimensions) in %.2fs", stats.Count,
-		stats.Dimension, time.Since(start).Seconds())
+	fmt.Printf("Indexed %d vectors (%d dimensions) in %.2fs; index size: %.2f mb\n",
+		stats.Count, stats.Dimension, time.Since(start).Seconds(), float64(stats.Size)/1e6)
 
 	// Run k-NN search on the first few test queries.
-	k := 10
+	k := 5
 	numQueries := 5
-	log.Info().Msgf("Running k-NN search (k=%d) on first %d test queries", k, numQueries)
+	fmt.Printf("Running k-NN search (k=%d) on first %d test queries\n", k, numQueries)
 
 	for i := 0; i < numQueries && i < len(testVectors); i++ {
 		query := testVectors[i]
@@ -54,11 +64,10 @@ func main() {
 		if err != nil {
 			log.Fatal().Err(err).Msgf("Search error on query %d", i)
 		}
-
-		log.Info().Msgf("Query #%d:", i)
-		log.Info().Msgf("  Predicted:     %s", formatResults(results))
-		log.Info().Msgf("  Ground-truth:  %s", formatGroundTruth(gtNeighbors[i],
-			gtDistances[i], k))
+		// Print only the summary results.
+		fmt.Printf("Query #%d:\n", i+1)
+		fmt.Printf(" -> Predicted:     %s\n", formatResults(results))
+		fmt.Printf(" -> Ground-truth:  %s\n", formatGroundTruth(gtNeighbors[i], gtDistances[i], k))
 	}
 }
 
@@ -66,7 +75,7 @@ func main() {
 func formatResults(results []core.Neighbor) string {
 	s := ""
 	for _, n := range results {
-		s += fmt.Sprintf("%d (%.3f) ", n.ID, n.Distance)
+		s += fmt.Sprintf("id=%d (dist=%.3f) ", n.ID, n.Distance)
 	}
 	return s
 }
@@ -75,7 +84,7 @@ func formatResults(results []core.Neighbor) string {
 func formatGroundTruth(neighbors []int, distances []float64, k int) string {
 	s := ""
 	for j := 0; j < k && j < len(neighbors); j++ {
-		s += fmt.Sprintf("%d (%.3f) ", neighbors[j], distances[j])
+		s += fmt.Sprintf("id=%d (dist=%.3f) ", neighbors[j], distances[j])
 	}
 	return s
 }
