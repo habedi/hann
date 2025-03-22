@@ -70,10 +70,10 @@ func LoadCSV(index core.Index, path string, skipHeader bool) error {
 	if err != nil {
 		return err
 	}
-	// Adjust IDs by adding 1 so that training vectors are 1-indexed.
+	// Do not adjust IDs. Use 0-indexing to match ground-truth.
 	for id, vec := range vectors {
-		if err := index.Add(id+1, vec); err != nil {
-			return fmt.Errorf("failed to add vector %d: %w", id+1, err)
+		if err := index.Add(id, vec); err != nil {
+			return fmt.Errorf("failed to add vector %d: %w", id, err)
 		}
 	}
 	log.Info().Msgf("Loaded %d vectors from %s", len(vectors), path)
@@ -139,19 +139,18 @@ func parseValue[T int | float32 | float64](s string) (T, error) {
 }
 
 // LoadTrainingVectors loads training vectors from "train.csv" in the specified directory.
-// It returns a map from id (1-indexed row number) to the vector.
+// It returns a map from id (row number, 0-indexed) to the vector.
 func LoadTrainingVectors(dir string) (map[int][]float32, error) {
 	trainPath := filepath.Join(dir, "train.csv")
 	log.Info().Msgf("Loading training vectors from: %s", trainPath)
-	// Here, we do not skip a header (CSV files have no header).
+	// reuse generic CSV reader (no header in these CSV files)
 	vectors, err := readCSV[float32](trainPath, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load train.csv: %w", err)
 	}
 	m := make(map[int][]float32, len(vectors))
-	// Use id+1 so that the training vector IDs are 1-indexed.
 	for id, vec := range vectors {
-		m[id+1] = vec
+		m[id] = vec
 	}
 	log.Info().Msgf("Loaded %d training vectors from %s", len(m), trainPath)
 	return m, nil
@@ -165,7 +164,6 @@ func LoadTestDataset(dir string) ([][]float32, [][]int, [][]float64, error) {
 	distancesPath := filepath.Join(dir, "distances.csv")
 
 	log.Info().Msgf("Loading test vectors from: %s", testPath)
-	// Again, do not skip header.
 	testVectors, err := readCSV[float32](testPath, false)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to load test.csv: %w", err)
