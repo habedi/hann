@@ -40,7 +40,8 @@ func main() {
 	}
 
 	stats := index.Stats()
-	log.Info().Msgf("Indexed %d vectors (%d dimensions) in %.2fs", stats.Count, stats.Dimension, time.Since(start).Seconds())
+	log.Info().Msgf("Indexed %d vectors (%d dimensions) in %.2fs", stats.Count,
+		stats.Dimension, time.Since(start).Seconds())
 
 	// Run k-NN search on the first few test queries.
 	k := 10
@@ -56,7 +57,8 @@ func main() {
 
 		log.Info().Msgf("Query #%d:", i)
 		log.Info().Msgf("  Predicted:     %s", formatResults(results))
-		log.Info().Msgf("  Ground-truth:  %s", formatGroundTruth(gtNeighbors[i], gtDistances[i], k))
+		log.Info().Msgf("  Ground-truth:  %s", formatGroundTruth(gtNeighbors[i],
+			gtDistances[i], k))
 	}
 }
 
