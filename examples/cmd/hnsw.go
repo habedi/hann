@@ -38,6 +38,8 @@ func main() {
 	trainingVectors, err := examples.LoadTrainingVectors(datasetPath)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to load training vectors")
+	} else {
+		log.Info().Msgf("Loaded %d training vectors", len(trainingVectors))
 	}
 	if err := index.BulkAdd(trainingVectors); err != nil {
 		log.Fatal().Err(err).Msg("BulkAdd failed")
@@ -47,6 +49,8 @@ func main() {
 	testVectors, gtNeighbors, gtDistances, err := examples.LoadTestDataset(datasetPath)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to load test dataset")
+	} else {
+		log.Info().Msgf("Loaded %d test vectors", len(testVectors))
 	}
 
 	stats := index.Stats()
@@ -56,7 +60,7 @@ func main() {
 	// Run k-NN search on the first few test queries.
 	k := 5
 	numQueries := 5
-	fmt.Printf("Running k-NN search (k=%d) on first %d test queries\n", k, numQueries)
+	fmt.Printf("Running kNN search (k=%d) on first %d test queries\n", k, numQueries)
 
 	for i := 0; i < numQueries && i < len(testVectors); i++ {
 		query := testVectors[i]
@@ -67,7 +71,8 @@ func main() {
 		// Print only the summary results.
 		fmt.Printf("Query #%d:\n", i+1)
 		fmt.Printf(" -> Predicted:     %s\n", formatResults(results))
-		fmt.Printf(" -> Ground-truth:  %s\n", formatGroundTruth(gtNeighbors[i], gtDistances[i], k))
+		fmt.Printf(" -> Ground-truth:  %s\n", formatGroundTruth(gtNeighbors[i],
+			gtDistances[i], k))
 	}
 }
 
