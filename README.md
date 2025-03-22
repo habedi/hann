@@ -2,12 +2,12 @@
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/habedi/hann/tests.yml?label=tests&style=flat&labelColor=555555&logo=github)](https://github.com/habedi/hann/actions/workflows/tests.yml)
 [![Lints](https://img.shields.io/github/actions/workflow/status/habedi/hann/lints.yml?label=lints&style=flat&labelColor=555555&logo=github)](https://github.com/habedi/hann/actions/workflows/lints.yml)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/habedi/hann?label=go%20version&style=flat&labelColor=555555&logo=go)](go.mod)
-[![Go Reference](https://img.shields.io/badge/Go%20Reference-Docs-3776ab?label=go%20reference&style=flat&labelColor=555555&logo=go)](https://pkg.go.dev/github.com/habedi/hann)
 [![Code Coverage](https://img.shields.io/codecov/c/github/habedi/hann?label=coverage&style=flat&labelColor=555555&logo=codecov)](https://codecov.io/gh/habedi/hann)
 [![CodeFactor](https://img.shields.io/codefactor/grade/github/habedi/hann?label=code%20quality&style=flat&labelColor=555555&logo=codefactor)](https://www.codefactor.io/repository/github/habedi/hann)
-[![Release](https://img.shields.io/github/release/habedi/hann.svg?label=release&style=flat&labelColor=555555&logo=github)](https://github.com/habedi/hann/releases/latest)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/habedi/hann?label=go%20version&style=flat&labelColor=555555&logo=go)](go.mod)
+[![Go Reference](https://img.shields.io/badge/Go%20Reference-Docs-3776ab?label=go%20reference&style=flat&labelColor=555555&logo=go)](https://pkg.go.dev/github.com/habedi/hann)
 [![License](https://img.shields.io/badge/license-MIT-007ec6?label=license&style=flat&labelColor=555555&logo=open-source-initiative)](LICENSE)
+[![Release](https://img.shields.io/github/release/habedi/hann.svg?label=release&style=flat&labelColor=555555&logo=github)](https://github.com/habedi/hann/releases/latest)
 
 Hann is a high-performance approximate nearest neighbor search (ANN) library for Go.
 It provides a collection of index data structures for efficient similarity search in high-dimensional spaces.
