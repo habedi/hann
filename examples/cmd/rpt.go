@@ -51,10 +51,10 @@ func main() {
 	fmt.Printf("Indexed %d vectors (%d dimensions) in %.2fs; index size: %.2f mb\n",
 		stats.Count, stats.Dimension, time.Since(start).Seconds(), float64(stats.Size)/1e6)
 
-	// Run k-NN search on the first few test queries.
+	// Run kNN search on the first few test queries.
 	k := 5
 	numQueries := 5
-	fmt.Printf("Running k-NN search (k=%d) on first %d test queries\n", k, numQueries)
+	fmt.Printf("Running kNN search (k=%d) on first %d test queries\n", k, numQueries)
 
 	for i := 0; i < numQueries && i < len(testVectors); i++ {
 		query := testVectors[i]
