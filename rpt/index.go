@@ -35,21 +35,28 @@ type RPTIndex struct {
 	points    map[int][]float32 // id -> vector
 	tree      *treeNode         // cached tree built from points
 	dirty     bool              // true if the tree needs rebuilding
+
+	// New fields for distance metric support.
+	Distance     core.DistanceFunc // internal distance function
+	DistanceName string            // human–readable name for the distance metric
 }
 
 const leafCapacity = 10
 
 // NewRPTIndex creates a new RPTIndex for vectors of the given dimension.
-func NewRPTIndex(dimension int) *RPTIndex {
+// The distance function and its human–readable name are provided.
+func NewRPTIndex(dimension int, distance core.DistanceFunc, distanceName string) *RPTIndex {
 	return &RPTIndex{
-		dimension: dimension,
-		points:    make(map[int][]float32),
-		dirty:     true,
+		dimension:    dimension,
+		points:       make(map[int][]float32),
+		dirty:        true,
+		Distance:     distance,
+		DistanceName: distanceName,
 	}
 }
 
 // buildTreeRecursive recursively builds a treeNode from the given point IDs.
-func buildTreeRecursive(ids []int, points map[int][]float32, dimension int) *treeNode {
+func buildTreeRecursive(ids []int, points map[int][]float32, dimension int, distance core.DistanceFunc) *treeNode {
 	// If there are few points, make a leaf node.
 	if len(ids) <= leafCapacity {
 		return &treeNode{
@@ -67,7 +74,6 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int) *tre
 		norm += float64(v * v)
 	}
 	norm = math.Sqrt(norm)
-	// Avoid division by zero.
 	if norm < 1e-8 {
 		norm = 1
 	}
@@ -104,7 +110,7 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int) *tre
 			rightIDs = append(rightIDs, p.id)
 		}
 	}
-	// Avoid empty children by splitting evenly.
+	// Avoid empty children.
 	if len(leftIDs) == 0 {
 		leftIDs = rightIDs[:len(rightIDs)/2]
 		rightIDs = rightIDs[len(rightIDs)/2:]
@@ -117,8 +123,8 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int) *tre
 		isLeaf:     false,
 		projection: proj,
 		threshold:  threshold,
-		left:       buildTreeRecursive(leftIDs, points, dimension),
-		right:      buildTreeRecursive(rightIDs, points, dimension),
+		left:       buildTreeRecursive(leftIDs, points, dimension, distance),
+		right:      buildTreeRecursive(rightIDs, points, dimension, distance),
 	}
 }
 
@@ -132,27 +138,26 @@ func (r *RPTIndex) buildTree() {
 	rand.Shuffle(len(ids), func(i, j int) {
 		ids[i], ids[j] = ids[j], ids[i]
 	})
-	r.tree = buildTreeRecursive(ids, r.points, r.dimension)
+	r.tree = buildTreeRecursive(ids, r.points, r.dimension, r.Distance)
 	r.dirty = false
 }
 
 // searchTree traverses the tree to find candidate point IDs.
-func searchTree(node *treeNode, query []float32, dimension int) []int {
+func searchTree(node *treeNode, query []float32, dimension int, distance core.DistanceFunc) []int {
 	if node == nil {
 		return nil
 	}
 	if node.isLeaf {
 		return node.points
 	}
-	// Compute dot product for query.
 	var dot float64
 	for i := 0; i < dimension; i++ {
 		dot += float64(query[i]) * float64(node.projection[i])
 	}
 	if dot < node.threshold {
-		return searchTree(node.left, query, dimension)
+		return searchTree(node.left, query, dimension, distance)
 	}
-	return searchTree(node.right, query, dimension)
+	return searchTree(node.right, query, dimension, distance)
 }
 
 // Add inserts a vector with the given id.
@@ -170,6 +175,23 @@ func (r *RPTIndex) Add(id int, vector []float32) error {
 	return nil
 }
 
+// BulkAdd inserts multiple vectors into the index.
+func (r *RPTIndex) BulkAdd(vectors map[int][]float32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, vector := range vectors {
+		if len(vector) != r.dimension {
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), r.dimension, id)
+		}
+		if _, exists := r.points[id]; exists {
+			return fmt.Errorf("id %d already exists", id)
+		}
+		r.points[id] = vector
+	}
+	r.dirty = true
+	return nil
+}
+
 // Delete removes the vector with the given id.
 func (r *RPTIndex) Delete(id int) error {
 	r.mu.Lock()
@@ -178,6 +200,19 @@ func (r *RPTIndex) Delete(id int) error {
 		return fmt.Errorf("id %d not found", id)
 	}
 	delete(r.points, id)
+	r.dirty = true
+	return nil
+}
+
+// BulkDelete removes multiple vectors from the index.
+func (r *RPTIndex) BulkDelete(ids []int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, id := range ids {
+		if _, exists := r.points[id]; exists {
+			delete(r.points, id)
+		}
+	}
 	r.dirty = true
 	return nil
 }
@@ -197,8 +232,26 @@ func (r *RPTIndex) Update(id int, vector []float32) error {
 	return nil
 }
 
+// BulkUpdate updates multiple vectors in the index.
+func (r *RPTIndex) BulkUpdate(updates map[int][]float32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, vector := range updates {
+		if len(vector) != r.dimension {
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), r.dimension, id)
+		}
+		if _, exists := r.points[id]; !exists {
+			return fmt.Errorf("id %d not found", id)
+		}
+		r.points[id] = vector
+	}
+	r.dirty = true
+	return nil
+}
+
 // Search returns the k nearest neighbors (ids and distances) for a query vector.
-func (r *RPTIndex) Search(query []float32, k int, distance core.DistanceFunc) ([]core.Neighbor, error) {
+// It uses the internally stored distance function.
+func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	r.mu.RLock()
 	if len(query) != r.dimension {
 		r.mu.RUnlock()
@@ -209,38 +262,37 @@ func (r *RPTIndex) Search(query []float32, k int, distance core.DistanceFunc) ([
 		return nil, errors.New("index is empty")
 	}
 	if r.dirty {
-		// Upgrade lock: release read lock, rebuild tree with write lock, then reacquire read lock.
+		// Upgrade lock: release read lock, rebuild tree under write lock, then reacquire read lock.
 		r.mu.RUnlock()
 		r.mu.Lock()
-		if r.dirty { // double-check flag
+		if r.dirty { // double-check
 			r.buildTree()
 		}
 		r.mu.Unlock()
 		r.mu.RLock()
 	}
-	candidateIDs := searchTree(r.tree, query, r.dimension)
+	candidateIDs := searchTree(r.tree, query, r.dimension, r.Distance)
 	r.mu.RUnlock()
 
-	// Compute distances for candidate IDs.
 	var neighbors []core.Neighbor
 	for _, id := range candidateIDs {
 		vec := r.points[id]
-		d := distance(query, vec)
+		d := r.Distance(query, vec)
 		neighbors = append(neighbors, core.Neighbor{ID: id, Distance: d})
 	}
 	// Fallback: if not enough candidates, scan all points.
 	if len(neighbors) < k {
 		r.mu.RLock()
 		for id, vec := range r.points {
-			already := false
-			for _, n := range neighbors {
-				if n.ID == id {
-					already = true
+			found := false
+			for _, nb := range neighbors {
+				if nb.ID == id {
+					found = true
 					break
 				}
 			}
-			if !already {
-				d := distance(query, vec)
+			if !found {
+				d := r.Distance(query, vec)
 				neighbors = append(neighbors, core.Neighbor{ID: id, Distance: d})
 			}
 		}
@@ -255,40 +307,7 @@ func (r *RPTIndex) Search(query []float32, k int, distance core.DistanceFunc) ([
 	return neighbors[:k], nil
 }
 
-// RangeSearch returns all neighbor ids within the specified radius.
-func (r *RPTIndex) RangeSearch(query []float32, radius float64, distance core.DistanceFunc) ([]int, error) {
-	r.mu.RLock()
-	if len(query) != r.dimension {
-		r.mu.RUnlock()
-		return nil, fmt.Errorf("query dimension %d does not match index dimension %d", len(query), r.dimension)
-	}
-	if len(r.points) == 0 {
-		r.mu.RUnlock()
-		return nil, errors.New("index is empty")
-	}
-	if r.dirty {
-		r.mu.RUnlock()
-		r.mu.Lock()
-		if r.dirty {
-			r.buildTree()
-		}
-		r.mu.Unlock()
-		r.mu.RLock()
-	}
-	candidateIDs := searchTree(r.tree, query, r.dimension)
-	r.mu.RUnlock()
-
-	var ids []int
-	for _, id := range candidateIDs {
-		vec := r.points[id]
-		if distance(query, vec) <= radius {
-			ids = append(ids, id)
-		}
-	}
-	return ids, nil
-}
-
-// Stats returns metadata about the index.
+// Stats returns metadata about the index, including the distance metric name.
 func (r *RPTIndex) Stats() core.IndexStats {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -298,21 +317,26 @@ func (r *RPTIndex) Stats() core.IndexStats {
 		Count:     count,
 		Dimension: r.dimension,
 		Size:      size,
+		Distance:  r.DistanceName,
 	}
 }
 
-// Persistence: We persist only the points and dimension; the tree is rebuilt on demand.
+// --- Persistence ---
+//
+// We persist only the points and dimension; the tree is rebuilt on demand.
 type rptSerialized struct {
-	Dimension int
-	Points    map[int][]float32
+	Dimension    int
+	Points       map[int][]float32
+	DistanceName string
 }
 
 func (r *RPTIndex) GobEncode() ([]byte, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	ser := rptSerialized{
-		Dimension: r.dimension,
-		Points:    r.points,
+		Dimension:    r.dimension,
+		Points:       r.points,
+		DistanceName: r.DistanceName,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -331,6 +355,8 @@ func (r *RPTIndex) GobDecode(data []byte) error {
 	}
 	r.dimension = ser.Dimension
 	r.points = ser.Points
+	r.DistanceName = ser.DistanceName
+	// The Distance function is not persisted; it must be set externally.
 	r.dirty = true
 	return nil
 }
@@ -361,7 +387,7 @@ func (r *RPTIndex) Load(path string) error {
 	return dec.Decode(r)
 }
 
-// Verify RPTIndex implements the core.Index interface.
+// Ensure RPTIndex implements the core.Index interface.
 var _ core.Index = (*RPTIndex)(nil)
 
 func init() {

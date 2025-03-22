@@ -19,6 +19,7 @@ func TestDistanceFunctions(t *testing.T) {
 		expectedManhattan        float64
 		expectedCosineDistance   float64
 		expectedAngularDistance  float64
+		expectedDotProduct       float64
 	}{
 		{
 			name:                     "Identical Vectors",
@@ -29,32 +30,38 @@ func TestDistanceFunctions(t *testing.T) {
 			expectedManhattan:        0,
 			expectedCosineDistance:   0,
 			expectedAngularDistance:  0,
+			// Dot product: 1+4+9+16+25+36 = 91
+			expectedDotProduct: 91,
 		},
 		{
 			name: "Opposite Order",
 			a:    []float32{1, 2, 3, 4, 5, 6},
 			b:    []float32{6, 5, 4, 3, 2, 1},
-			// Euclidean: sqrt(70), squared=70, Manhattan=18.
+			// Euclidean: sqrt((5^2 + 3^2 + 1^2 + 1^2 + 3^2 + 5^2)) = sqrt(70), squared = 70, Manhattan = 18.
 			expectedEuclidean:        math.Sqrt(70),
 			expectedSquaredEuclidean: 70,
 			expectedManhattan:        18,
-			// Cosine: similarity = 56/91, so cosine distance = 1 - (56/91).
+			// Cosine: similarity = 56 / 91, so cosine distance = 1 - (56/91).
 			expectedCosineDistance: 1 - (56.0 / 91.0),
 			// Angular: acos(56/91)
 			expectedAngularDistance: math.Acos(56.0 / 91.0),
+			// Dot product: 1*6 + 2*5 + 3*4 + 4*3 + 5*2 + 6*1 = 56
+			expectedDotProduct: 56,
 		},
 		{
 			name: "Binary Opposites",
 			a:    []float32{1, 0, 0, 1, 0, 1},
 			b:    []float32{0, 1, 1, 0, 1, 0},
-			// Euclidean: sqrt(6), squared=6, Manhattan=6.
+			// Euclidean: sqrt(1+1+1+1+1+1) = sqrt(6), squared = 6, Manhattan = 6.
 			expectedEuclidean:        math.Sqrt(6),
 			expectedSquaredEuclidean: 6,
 			expectedManhattan:        6,
-			// Cosine: similarity = 0 so cosine distance = 1.
+			// Cosine: dot = 0, so cosine similarity is 0 and cosine distance = 1.
 			expectedCosineDistance: 1,
 			// Angular: acos(0) = π/2.
 			expectedAngularDistance: math.Pi / 2,
+			// Dot product: 1*0 + 0*1 + 0*1 + 1*0 + 0*1 + 1*0 = 0.
+			expectedDotProduct: 0,
 		},
 	}
 
@@ -67,6 +74,7 @@ func TestDistanceFunctions(t *testing.T) {
 			manhattan := Manhattan(tt.a, tt.b)
 			cosine := CosineDistance(tt.a, tt.b)
 			angular := AngularDistance(tt.a, tt.b)
+			dot := DotProduct(tt.a, tt.b)
 
 			// Assert: compare computed values with expected ones.
 			if !almostEqual(euclid, tt.expectedEuclidean, 1e-6) {
@@ -83,6 +91,9 @@ func TestDistanceFunctions(t *testing.T) {
 			}
 			if !almostEqual(angular, tt.expectedAngularDistance, 1e-6) {
 				t.Errorf("AngularDistance(%v, %v) = %v; want %v", tt.a, tt.b, angular, tt.expectedAngularDistance)
+			}
+			if !almostEqual(dot, tt.expectedDotProduct, 1e-6) {
+				t.Errorf("DotProduct(%v, %v) = %v; want %v", tt.a, tt.b, dot, tt.expectedDotProduct)
 			}
 		})
 	}

@@ -20,8 +20,10 @@ float simd_manhattan(const float* a, const float* b, size_t n);
 float simd_cosine_distance(const float* a, const float* b, size_t n);
 
 // Computes the angular distance (in radians) between two float arrays using AVX.
-// Angular distance is defined as acos(dot/(||a|| * ||b||)). If either norm is zero, it returns π.
 float simd_angular_distance(const float* a, const float* b, size_t n);
+
+// Computes the dot product distance between two float arrays using AVX.
+float simd_dot_product_distance(const float* a, const float* b, size_t n);
 
 #ifdef __cplusplus
 }

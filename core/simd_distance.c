@@ -2,6 +2,14 @@
 #include <immintrin.h>
 #include <math.h>
 
+/**
+ * \brief Computes the Euclidean distance between two vectors using SIMD instructions.
+ *
+ * \param a Pointer to the first vector.
+ * \param b Pointer to the second vector.
+ * \param n The number of elements in the vectors.
+ * \return The Euclidean distance between the two vectors.
+ */
 float simd_euclidean(const float* a, const float* b, size_t n) {
     size_t i = 0;
     __m256 sum_vec = _mm256_setzero_ps();
@@ -24,6 +32,14 @@ float simd_euclidean(const float* a, const float* b, size_t n) {
     return sqrtf(sum);
 }
 
+/**
+ * \brief Computes the squared Euclidean distance between two vectors using SIMD instructions.
+ *
+ * \param a Pointer to the first vector.
+ * \param b Pointer to the second vector.
+ * \param n The number of elements in the vectors.
+ * \return The squared Euclidean distance between the two vectors.
+ */
 float simd_squared_euclidean(const float* a, const float* b, size_t n) {
     size_t i = 0;
     __m256 sum_vec = _mm256_setzero_ps();
@@ -46,6 +62,14 @@ float simd_squared_euclidean(const float* a, const float* b, size_t n) {
     return sum;
 }
 
+/**
+ * \brief Computes the Manhattan distance between two vectors using SIMD instructions.
+ *
+ * \param a Pointer to the first vector.
+ * \param b Pointer to the second vector.
+ * \param n The number of elements in the vectors.
+ * \return The Manhattan distance between the two vectors.
+ */
 float simd_manhattan(const float* a, const float* b, size_t n) {
     size_t i = 0;
     __m256 sum_vec = _mm256_setzero_ps();
@@ -69,6 +93,14 @@ float simd_manhattan(const float* a, const float* b, size_t n) {
     return sum;
 }
 
+/**
+ * \brief Computes the cosine distance between two vectors using SIMD instructions.
+ *
+ * \param a Pointer to the first vector.
+ * \param b Pointer to the second vector.
+ * \param n The number of elements in the vectors.
+ * \return The cosine distance between the two vectors.
+ */
 float simd_cosine_distance(const float* a, const float* b, size_t n) {
     size_t i = 0;
     __m256 dot_vec = _mm256_setzero_ps();
@@ -112,6 +144,14 @@ float simd_cosine_distance(const float* a, const float* b, size_t n) {
     return 1.0f - cosine_similarity;
 }
 
+/**
+ * \brief Computes the angular distance between two vectors using SIMD instructions.
+ *
+ * \param a Pointer to the first vector.
+ * \param b Pointer to the second vector.
+ * \param n The number of elements in the vectors.
+ * \return The angular distance between the two vectors.
+ */
 float simd_angular_distance(const float* a, const float* b, size_t n) {
     size_t i = 0;
     __m256 dot_vec = _mm256_setzero_ps();
@@ -166,4 +206,36 @@ float simd_angular_distance(const float* a, const float* b, size_t n) {
     if (fabsf(1.0f - cosine) < 1e-3f) cosine = 1.0f;
     if (fabsf(cosine + 1.0f) < 1e-3f) cosine = -1.0f;
     return acosf(cosine);
+}
+
+/**
+ * \brief Computes the dot product distance between two vectors using SIMD instructions.
+ *
+ * \param a Pointer to the first vector.
+ * \param b Pointer to the second vector.
+ * \param n The number of elements in the vectors.
+ * \return The dot product distance between the two vectors.
+ */
+float simd_dot_product_distance(const float* a, const float* b, size_t n) {
+    size_t i = 0;
+    __m256 dot_vec = _mm256_setzero_ps();
+    size_t limit = n - (n % 8);
+    for (; i < limit; i += 8) {
+        __m256 va = _mm256_loadu_ps(a + i);
+        __m256 vb = _mm256_loadu_ps(b + i);
+#ifdef __FMA__
+        dot_vec = _mm256_fmadd_ps(va, vb, dot_vec);
+#else
+        dot_vec = _mm256_add_ps(dot_vec, _mm256_mul_ps(va, vb));
+#endif
+    }
+    float dot_array[8];
+    _mm256_storeu_ps(dot_array, dot_vec);
+    float dot = dot_array[0] + dot_array[1] + dot_array[2] + dot_array[3] +
+                dot_array[4] + dot_array[5] + dot_array[6] + dot_array[7];
+    for (; i < n; i++) {
+        dot += a[i] * b[i];
+    }
+    // Negate the dot product to get the distance.
+    return dot;
 }

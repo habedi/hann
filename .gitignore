@@ -84,9 +84,6 @@ template-go-project
 *.gob
 *.bin
 *.index
-examples/data/*.csv
-examples/data/*.json
-examples/data/*.parquet
-examples/output/*.csv
-examples/output/*.json
-examples/output/*.parquet
+
+# Ignore the directory where the data for the examples is stored
+example/data/nearest-neighbors-datasets
