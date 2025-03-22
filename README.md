@@ -22,12 +22,12 @@ It provides a collection of index data structures for efficient similarity searc
 
 Check out the [examples](examples) directory for usage examples.
 
-| Index | Example File                              | Description                                                              |
-|-------|-------------------------------------------|--------------------------------------------------------------------------|
-| 1     | [hnsw.go](examples/cmd/hnsw.go)           | Create and use an HNSW index: insert, delete, update, and search vectors |
-| 2     | [pqivf.go](examples/cmd/pqivf.go)         | Create and use a PQIVF index: insert, delete, update, and search vectors |
-| 3     | [rpt.go](examples/cmd/rpt.go)             | Create and use an RPT index: insert, delete, update, and search vectors  |
-| 4     | [load_data.go](examples/cmd/load_data.go) | Helper functions to load datasets for the examples                       |
+| Index | Example File                          | Description                                                              |
+|-------|---------------------------------------|--------------------------------------------------------------------------|
+| 1     | [hnsw.go](examples/cmd/hnsw.go)       | Create and use an HNSW index: insert, delete, update, and search vectors |
+| 2     | [pqivf.go](examples/cmd/pqivf.go)     | Create and use a PQIVF index: insert, delete, update, and search vectors |
+| 3     | [rpt.go](examples/cmd/rpt.go)         | Create and use an RPT index: insert, delete, update, and search vectors  |
+| 4     | [load_data.go](examples/load_data.go) | Helper functions to load datasets for the examples                       |
 
 ### Contributing
 
