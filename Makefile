@@ -8,7 +8,7 @@ GO ?= go
 MAIN ?= ./main.go
 ECHO := @echo
 DATA_DIR := "examples/data"
-DEBUG_HANN := 0
+DEBUG_HANN := 1
 
 # Adjust PATH if necessary (append /snap/bin if not present)
 PATH := $(if $(findstring /snap/bin,$(PATH)),$(PATH),/snap/bin:$(PATH))
