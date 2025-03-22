@@ -489,13 +489,27 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 			log.Error().Err(err).Msg("BulkUpdate failed")
 			return err
 		}
+		// Remove stale links.
 		h.removeNodeLinks(node)
+		// Update the vector and force level 0.
 		node.Vector = vector
-		node.Level = h.randomLevel()
+		node.Level = 0
 		node.Links = make(map[int][]*Node)
 		node.reverseLinks = make(map[int][]*Node)
 		h.insertNode(node, h.ef)
 	}
+	// Recompute entry point.
+	var newEntryPoint *Node
+	maxLevel := -1
+	for _, node := range h.nodes {
+		if node.Level > maxLevel {
+			newEntryPoint = node
+			maxLevel = node.Level
+		}
+	}
+	h.entryPoint = newEntryPoint
+	h.maxLevel = maxLevel
+
 	log.Info().Msgf("BulkUpdate: updated %d vectors", len(updates))
 	return nil
 }

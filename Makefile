@@ -5,7 +5,6 @@ BINARY := bin/$(BINARY_NAME)
 COVER_PROFILE := coverage.txt
 GO_FILES := $(shell find . -type f -name '*.go')
 GO ?= go
-MAIN ?= ./main.go
 ECHO := @echo
 DATA_DIR := "examples/data"
 DEBUG_HANN := 1
