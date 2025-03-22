@@ -97,3 +97,5 @@ download-data: ## Download the datasets used in the examples
 run-examples: format ## Run the examples
 	@echo "Running the examples..."
 	@DEBUG_HANN=$(DEBUG_HANN) $(GO) run examples/cmd/hnsw.go
+	@DEBUG_HANN=$(DEBUG_HANN) $(GO) run examples/cmd/pqivf.go
+	@DEBUG_HANN=$(DEBUG_HANN) $(GO) run examples/cmd/rpt.go
