@@ -64,14 +64,18 @@ func main() {
 		if err != nil {
 			log.Fatal().Err(err).Msgf("Search error on query %d", i)
 		}
+
+		// Max number of results to display.
+		maxResults := 10
+
 		// Compute Recall@k.
 		recall := examples.RecallAtK(results, gtNeighbors[i], k)
 
 		// Print only the summary results.
 		fmt.Printf("Query #%d:\n", i+1)
-		fmt.Printf(" -> Predicted:     %s\n", examples.FormatResults(results))
+		fmt.Printf(" -> Predicted:     %s\n", examples.FormatResults(results, maxResults))
 		fmt.Printf(" -> Ground-truth:  %s\n", examples.FormatGroundTruth(gtNeighbors[i],
-			gtDistances[i], k))
+			gtDistances[i], k, maxResults))
 		fmt.Printf(" -> Recall@%d:     %.2f\n", k, recall)
 	}
 }
