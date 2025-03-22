@@ -478,6 +478,7 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// Process updates: update each node’s vector and clear its links.
 	for id, vector := range updates {
 		node, exists := h.nodes[id]
 		if !exists {
@@ -489,28 +490,33 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 			log.Error().Err(err).Msg("BulkUpdate failed")
 			return err
 		}
-		// Remove stale links.
+		// Remove stale links from this node.
 		h.removeNodeLinks(node)
-		// Update the vector and force level 0.
+		// Update the node’s vector and reassign a random level.
 		node.Vector = vector
-		node.Level = 0
+		node.Level = h.randomLevel()
 		node.Links = make(map[int][]*Node)
 		node.reverseLinks = make(map[int][]*Node)
+	}
+
+	// Rebuild the entire graph from all nodes.
+	// This bulk rebuild ensures the new vectors are fully integrated.
+	allNodes := make([]*Node, 0, len(h.nodes))
+	for _, node := range h.nodes {
+		allNodes = append(allNodes, node)
+	}
+	// Sort nodes by descending level so that higher‐level nodes are inserted first.
+	sort.Slice(allNodes, func(i, j int) bool {
+		return allNodes[i].Level > allNodes[j].Level
+	})
+	// Reset the graph state.
+	h.entryPoint = nil
+	h.maxLevel = -1
+	for _, node := range allNodes {
 		h.insertNode(node, h.ef)
 	}
-	// Recompute entry point.
-	var newEntryPoint *Node
-	maxLevel := -1
-	for _, node := range h.nodes {
-		if node.Level > maxLevel {
-			newEntryPoint = node
-			maxLevel = node.Level
-		}
-	}
-	h.entryPoint = newEntryPoint
-	h.maxLevel = maxLevel
 
-	log.Info().Msgf("BulkUpdate: updated %d vectors", len(updates))
+	log.Info().Msgf("BulkUpdate: updated %d vectors and rebuilt the graph", len(updates))
 	return nil
 }
 
