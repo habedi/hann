@@ -7,6 +7,7 @@ GO_FILES := $(shell find . -type f -name '*.go')
 GO ?= go
 MAIN ?= ./main.go
 ECHO := @echo
+DATA_DIR := "examples/data"
 
 # Adjust PATH if necessary (append /snap/bin if not present)
 PATH := $(if $(findstring /snap/bin,$(PATH)),$(PATH),/snap/bin:$(PATH))
@@ -93,3 +94,8 @@ install-deps: ## Install development dependencies (for Debian-based systems)
 lint: format ## Run the linters
 	$(ECHO) "Linting Go files..."
 	@golangci-lint run ./...
+
+.PHONY: download-data
+download-data: ## Download the datasets used in the examples
+	@echo "Downloading datasets..."
+	@$(SHELL) $(DATA_DIR)/download_datasets.sh $(DATA_DIR)
