@@ -16,30 +16,30 @@ func main() {
 	// Set the logger to output to the console
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
-	HNSWIndexFashionMNIST("euclidean")
-	HNSWIndexGlove100("cosine")
+	HNSWIndexGIST("euclidean")
+	HNSWIndexDEEP1B("cosine")
 }
 
-func HNSWIndexFashionMNIST(distanceName string) {
+func HNSWIndexGIST(distanceName string) {
 	factory := func() core.Index {
-		dimension := 784
+		dimension := 960
 		M := 16
 		ef := 64
 		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
 	}
 
-	example.RunDataset(factory, "fashion-mnist-784-euclidean",
-		"example/data/nearest-neighbors-datasets", 100, 5, 5)
+	example.RunDataset(factory, "gist-960-euclidean",
+		"example/data/nearest-neighbors-datasets-large", 100, 5, 5)
 }
 
-func HNSWIndexGlove100(distanceName string) {
+func HNSWIndexDEEP1B(distanceName string) {
 	factory := func() core.Index {
-		dimension := 100
+		dimension := 96
 		M := 16
 		ef := 64
 		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
 	}
 
-	example.RunDataset(factory, "glove-100-angular",
-		"example/data/nearest-neighbors-datasets", 100, 5, 5)
+	example.RunDataset(factory, "deep-image-96-angular",
+		"example/data/nearest-neighbors-datasets-large", 100, 5, 5)
 }

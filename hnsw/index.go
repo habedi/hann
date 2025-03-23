@@ -6,16 +6,18 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"github.com/habedi/hann/core"
+	"github.com/rs/zerolog/log"
 	"math"
 	"math/rand"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
-	"time"
-
-	"github.com/habedi/hann/core"
-	"github.com/rs/zerolog/log"
 )
+
+// Internal pseudo-random number generator for the package.
+var seededRand = rand.New(rand.NewSource(core.GetSeed()))
 
 // candidate is used for internal candidate management.
 type candidate struct {
@@ -26,10 +28,12 @@ type candidate struct {
 // candidateMinHeap implements a min–heap.
 type candidateMinHeap []candidate
 
-func (h candidateMinHeap) Len() int            { return len(h) }
-func (h candidateMinHeap) Less(i, j int) bool  { return h[i].dist < h[j].dist }
-func (h candidateMinHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *candidateMinHeap) Push(x interface{}) { *h = append(*h, x.(candidate)) }
+func (h candidateMinHeap) Len() int           { return len(h) }
+func (h candidateMinHeap) Less(i, j int) bool { return h[i].dist < h[j].dist }
+func (h candidateMinHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *candidateMinHeap) Push(x interface{}) {
+	*h = append(*h, x.(candidate))
+}
 func (h *candidateMinHeap) Pop() interface{} {
 	old := *h
 	n := len(old)
@@ -41,10 +45,12 @@ func (h *candidateMinHeap) Pop() interface{} {
 // candidateMaxHeap implements a max–heap.
 type candidateMaxHeap []candidate
 
-func (h candidateMaxHeap) Len() int            { return len(h) }
-func (h candidateMaxHeap) Less(i, j int) bool  { return h[i].dist > h[j].dist }
-func (h candidateMaxHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *candidateMaxHeap) Push(x interface{}) { *h = append(*h, x.(candidate)) }
+func (h candidateMaxHeap) Len() int           { return len(h) }
+func (h candidateMaxHeap) Less(i, j int) bool { return h[i].dist > h[j].dist }
+func (h candidateMaxHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *candidateMaxHeap) Push(x interface{}) {
+	*h = append(*h, x.(candidate))
+}
 func (h *candidateMaxHeap) Pop() interface{} {
 	old := *h
 	n := len(old)
@@ -81,11 +87,6 @@ type HNSWIndex struct {
 	DistanceName string
 }
 
-func init() {
-	rand.New(rand.NewSource(time.Now().UnixNano()))
-	log.Debug().Msg("Initialized random seed for HNSW index")
-}
-
 // NewHNSW creates a new HNSW index with the given parameters.
 func NewHNSW(dimension int, M int, ef int, distance core.DistanceFunc, distanceName string) *HNSWIndex {
 	log.Info().Msgf("Creating new HNSW index with dimension=%d, M=%d, ef=%d, distance=%s", dimension, M, ef, distanceName)
@@ -105,7 +106,7 @@ func (h *HNSWIndex) randomLevel() int {
 	if h.M <= 1 {
 		return 0
 	}
-	level := int(-math.Log(rand.Float64()) / math.Log(float64(h.M)))
+	level := int(-math.Log(seededRand.Float64()) / math.Log(float64(h.M)))
 	log.Debug().Msgf("Generated random level %d", level)
 	return level
 }
@@ -360,6 +361,10 @@ func (h *HNSWIndex) Add(id int, vector []float32) error {
 	if len(vector) != h.Dimension {
 		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), h.Dimension)
 	}
+	if h.DistanceName == "cosine" {
+		// Normalize before storing.
+		core.NormalizeVector(vector)
+	}
 	if _, exists := h.Nodes[id]; exists {
 		return fmt.Errorf("id %d already exists", id)
 	}
@@ -385,11 +390,13 @@ func (h *HNSWIndex) Delete(id int) error {
 	}
 	h.removeNodeLinks(node)
 	delete(h.Nodes, id)
+	// Reassign entry point: choose the node with the highest level.
 	if h.EntryPoint != nil && h.EntryPoint.ID == id {
 		h.EntryPoint = nil
 		for _, n := range h.Nodes {
-			h.EntryPoint = n
-			break
+			if h.EntryPoint == nil || n.Level > h.EntryPoint.Level {
+				h.EntryPoint = n
+			}
 		}
 	}
 	return nil
@@ -405,6 +412,9 @@ func (h *HNSWIndex) Update(id int, vector []float32) error {
 	if len(vector) != h.Dimension {
 		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), h.Dimension)
 	}
+	if h.DistanceName == "cosine" {
+		core.NormalizeVector(vector)
+	}
 	h.removeNodeLinks(node)
 	node.Vector = vector
 	node.Level = h.randomLevel()
@@ -415,6 +425,18 @@ func (h *HNSWIndex) Update(id int, vector []float32) error {
 }
 
 func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
+	// If using cosine distance, perform bulk normalization.
+	if h.DistanceName == "cosine" {
+		var vecs [][]float32
+		for _, vector := range vectors {
+			if len(vector) != h.Dimension {
+				return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), h.Dimension)
+			}
+			vecs = append(vecs, vector)
+		}
+		core.NormalizeBatch(vecs)
+	}
+
 	nodesSlice := make([]*Node, 0, len(vectors))
 	for id, vector := range vectors {
 		if len(vector) != h.Dimension {
@@ -462,29 +484,14 @@ func (h *HNSWIndex) BulkDelete(ids []int) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 	for _, id := range ids {
-		if _, exists := h.Nodes[id]; !exists {
+		node, exists := h.Nodes[id]
+		if !exists {
 			continue
 		}
-		for _, n := range h.Nodes {
-			for L, neighbors := range n.Links {
-				newNeighbors := make([]*Node, 0, len(neighbors))
-				for _, neighbor := range neighbors {
-					if neighbor.ID != id {
-						newNeighbors = append(newNeighbors, neighbor)
-					}
-				}
-				n.Links[L] = newNeighbors
-			}
-		}
+		h.removeNodeLinks(node)
 		delete(h.Nodes, id)
-		if h.EntryPoint != nil && h.EntryPoint.ID == id {
-			h.EntryPoint = nil
-			for _, n := range h.Nodes {
-				h.EntryPoint = n
-				break
-			}
-		}
 	}
+	// Clean up neighbor lists for remaining nodes.
 	for _, n := range h.Nodes {
 		for L, neighbors := range n.Links {
 			newNeighbors := make([]*Node, 0, len(neighbors))
@@ -496,12 +503,32 @@ func (h *HNSWIndex) BulkDelete(ids []int) error {
 			n.Links[L] = newNeighbors
 		}
 	}
+	// Reassign entry point: choose the node with the highest level.
+	h.EntryPoint = nil
+	for _, n := range h.Nodes {
+		if h.EntryPoint == nil || n.Level > h.EntryPoint.Level {
+			h.EntryPoint = n
+		}
+	}
 	return nil
 }
 
 func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
+	// If using cosine distance, perform bulk normalization.
+	if h.DistanceName == "cosine" {
+		var vecs [][]float32
+		for _, vector := range updates {
+			if len(vector) != h.Dimension {
+				return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), h.Dimension)
+			}
+			vecs = append(vecs, vector)
+		}
+		core.NormalizeBatch(vecs)
+	}
+
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
+	// Update the nodes individually.
 	for id, vector := range updates {
 		node, exists := h.Nodes[id]
 		if !exists {
@@ -516,16 +543,23 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 		node.Links = make(map[int][]*Node)
 		node.ReverseLinks = make(map[int][]*Node)
 	}
+	// Rebuild the index by reinserting all nodes.
 	allNodes := make([]*Node, 0, len(h.Nodes))
 	for _, node := range h.Nodes {
 		allNodes = append(allNodes, node)
 	}
+	// Sort nodes by level in descending order.
 	sort.Slice(allNodes, func(i, j int) bool {
 		return allNodes[i].Level > allNodes[j].Level
 	})
+	// Reset the entry point and max level.
 	h.EntryPoint = nil
 	h.MaxLevel = -1
 	for _, node := range allNodes {
+		if h.EntryPoint == nil || node.Level > h.MaxLevel {
+			h.EntryPoint = node
+			h.MaxLevel = node.Level
+		}
 		h.insertNode(node, h.Ef)
 	}
 	return nil
@@ -541,7 +575,17 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	if h.EntryPoint == nil {
 		return nil, errors.New("index is empty")
 	}
+
+	// Normalize the query vector on read if cosine distance is used.
+	queryCopy := make([]float32, len(query))
+	copy(queryCopy, query)
+	if h.DistanceName == "cosine" {
+		core.NormalizeVector(queryCopy)
+	}
+	query = queryCopy
+
 	current := h.EntryPoint
+	// Greedy descent on levels above 0.
 	for L := h.MaxLevel; L > 0; L-- {
 		changed := true
 		for changed {
@@ -555,29 +599,75 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 		}
 	}
 	candidates := h.searchLayer(query, current, 0, h.Ef, h.Distance)
+	// If fewer than k candidates are found, perform a parallel fallback scan over all nodes.
 	if len(candidates) < k {
 		candidateIDs := make(map[int]bool)
 		for _, c := range candidates {
 			candidateIDs[c.node.ID] = true
 		}
-		fallbackHeap := candidateMaxHeap{}
-		heap.Init(&fallbackHeap)
+
+		fallbackSize := k - len(candidates)
+		// Build a slice of nodes not already in the candidate list.
+		nodesSlice := make([]*Node, 0, len(h.Nodes))
 		for _, node := range h.Nodes {
 			if candidateIDs[node.ID] {
 				continue
 			}
-			d := h.Distance(query, node.Vector)
-			cand := candidate{node, d}
-			if fallbackHeap.Len() < (k - len(candidates)) {
-				heap.Push(&fallbackHeap, cand)
-			} else if fallbackHeap.Len() > 0 && d < fallbackHeap[0].dist {
-				heap.Pop(&fallbackHeap)
-				heap.Push(&fallbackHeap, cand)
+			nodesSlice = append(nodesSlice, node)
+		}
+
+		numWorkers := runtime.NumCPU()
+		if numWorkers > len(nodesSlice) {
+			numWorkers = len(nodesSlice)
+		}
+		chunkSize := (len(nodesSlice) + numWorkers - 1) / numWorkers
+		resultsCh := make(chan candidateMaxHeap, numWorkers)
+		var wg sync.WaitGroup
+
+		for i := 0; i < numWorkers; i++ {
+			start := i * chunkSize
+			end := start + chunkSize
+			if end > len(nodesSlice) {
+				end = len(nodesSlice)
+			}
+			wg.Add(1)
+			go func(nodesChunk []*Node) {
+				defer wg.Done()
+				localHeap := candidateMaxHeap{}
+				heap.Init(&localHeap)
+				for _, node := range nodesChunk {
+					d := h.Distance(query, node.Vector)
+					cand := candidate{node, d}
+					if localHeap.Len() < fallbackSize {
+						heap.Push(&localHeap, cand)
+					} else if localHeap.Len() > 0 && d < localHeap[0].dist {
+						heap.Pop(&localHeap)
+						heap.Push(&localHeap, cand)
+					}
+				}
+				resultsCh <- localHeap
+			}(nodesSlice[start:end])
+		}
+		wg.Wait()
+		close(resultsCh)
+
+		// Merge partial heaps.
+		finalHeap := candidateMaxHeap{}
+		heap.Init(&finalHeap)
+		for partialHeap := range resultsCh {
+			for partialHeap.Len() > 0 {
+				cand := heap.Pop(&partialHeap).(candidate)
+				if finalHeap.Len() < fallbackSize {
+					heap.Push(&finalHeap, cand)
+				} else if finalHeap.Len() > 0 && cand.dist < finalHeap[0].dist {
+					heap.Pop(&finalHeap)
+					heap.Push(&finalHeap, cand)
+				}
 			}
 		}
-		fallbackCandidates := make([]candidate, fallbackHeap.Len())
+		fallbackCandidates := make([]candidate, finalHeap.Len())
 		for i := range fallbackCandidates {
-			fallbackCandidates[i] = heap.Pop(&fallbackHeap).(candidate)
+			fallbackCandidates[i] = heap.Pop(&finalHeap).(candidate)
 		}
 		candidates = append(candidates, fallbackCandidates...)
 		sort.Slice(candidates, func(i, j int) bool {
@@ -598,11 +688,9 @@ func (h *HNSWIndex) Stats() core.IndexStats {
 	h.Mu.RLock()
 	defer h.Mu.RUnlock()
 	count := len(h.Nodes)
-	size := count * h.Dimension * 4
 	stats := core.IndexStats{
 		Count:     count,
 		Dimension: h.Dimension,
-		Size:      size,
 		Distance:  h.DistanceName,
 	}
 	return stats

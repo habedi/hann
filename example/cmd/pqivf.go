@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 package main
 
 import (
@@ -10,19 +13,22 @@ import (
 )
 
 func main() {
+	// Set the logger to output to the console
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
-	PQIVFIndexFashionMNIST()
-	//PQIVFIndexGlove200()
+	PQIVFIndexFashionMNIST("euclidean")
+	PQIVFIndexSIFT128("squared_euclidean")
+	PQIVFIndexGlove50("cosine")
 }
 
-func PQIVFIndexFashionMNIST() {
+func PQIVFIndexFashionMNIST(distanceName string) {
 	factory := func() core.Index {
 		dimension := 784
 		coarseK := 16
 		numSubquantizers := 8
-		distanceName := "euclidean"
-		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers,
+		pqK := 256
+		kMeansIters := 10
+		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters,
 			core.Distances[distanceName], distanceName)
 	}
 
@@ -30,16 +36,32 @@ func PQIVFIndexFashionMNIST() {
 		"example/data/nearest-neighbors-datasets", 100, 5, 5)
 }
 
-func PQIVFIndexGlove200() {
+func PQIVFIndexSIFT128(distanceName string) {
 	factory := func() core.Index {
-		dimension := 200
+		dimension := 128
 		coarseK := 16
 		numSubquantizers := 8
-		distanceName := "angular"
-		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers,
+		pqK := 256
+		kMeansIters := 10
+		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters,
 			core.Distances[distanceName], distanceName)
 	}
 
-	example.RunDataset(factory, "glove-200-angular",
+	example.RunDataset(factory, "sift-128-euclidean",
+		"example/data/nearest-neighbors-datasets", 100, 5, 5)
+}
+
+func PQIVFIndexGlove50(distanceName string) {
+	factory := func() core.Index {
+		dimension := 50
+		coarseK := 16
+		numSubquantizers := 8
+		pqK := 256
+		kMeansIters := 10
+		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters,
+			core.Distances[distanceName], distanceName)
+	}
+
+	example.RunDataset(factory, "glove-50-angular",
 		"example/data/nearest-neighbors-datasets", 100, 5, 5)
 }

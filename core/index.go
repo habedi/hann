@@ -67,6 +67,5 @@ type Neighbor struct {
 type IndexStats struct {
 	Count     int    // total number of indexed vectors.
 	Dimension int    // dimensionality of vectors.
-	Size      int    // (approximate) size of the index in bytes.
 	Distance  string // name of the distance function used by the index.
 }

@@ -6,7 +6,9 @@ GO ?= go
 ECHO := @echo
 DATA_DIR := "example/data"
 EXAMPLES_DIR := "example/cmd"
-DEBUG_HANN := 1
+HF_DATASET := "nearest-neighbors-datasets"
+HANN_SEED := 33
+HANN_LOG := 1
 
 # List of packages to test (excluding example/cmd)
 PACKAGES := $(shell $(GO) list ./... | grep -v $(EXAMPLES_DIR))
@@ -40,7 +42,7 @@ format: ## Format Go files
 .PHONY: test
 test: format ## Run the tests
 	$(ECHO) "Running the tests..."
-	@DEBUG_HANN=$(DEBUG_HANN) $(GO) test -v --cover --coverprofile=$(COVER_PROFILE) --race --count=1 ${PACKAGES}
+	@HANN_LOG=$(HANN_LOG) $(GO) test -v --cover --coverprofile=$(COVER_PROFILE) --race --count=1 ${PACKAGES}
 
 .PHONY: showcov
 showcov: test ## Display test coverage report
@@ -54,7 +56,6 @@ clean: ## Remove build artifacts and temporary files
 	@find . -type f -name '*.got.*' -delete
 	@find . -type f -name '*.out' -delete
 	@rm -f $(COVER_PROFILE)
-	@rm -rf bin/
 
 .PHONY: install-snap
 install-snap: ## Install Snap (for Debian-based systems)
@@ -69,22 +70,35 @@ install-deps: ## Install development dependencies (for Debian-based systems)
 	@$(MAKE) install-snap
 	@sudo snap install go --classic
 	@sudo snap install golangci-lint --classic
+	@sudo apt-get install -y python3-poetry
 	@$(GO) mod download
 
 .PHONY: lint
-lint: format ## Run the linters
+lint: format ## Run the linter checks
 	$(ECHO) "Linting Go files..."
 	@golangci-lint run ./...
 
 .PHONY: download-data
 download-data: ## Download the datasets used in the examples
 	@echo "Downloading datasets..."
-	@$(SHELL) $(DATA_DIR)/download_datasets.sh $(DATA_DIR)
+	@$(SHELL) $(DATA_DIR)/download_datasets.sh $(DATA_DIR) $(HF_DATASET)
+
+.PHONY: download-data-large
+download-data-large: ## Download the large datasets used in the examples
+	@echo "Downloading large datasets..."
+	@$(SHELL) $(DATA_DIR)/download_datasets.sh $(DATA_DIR) "$(HF_DATASET)-large"
 
 .PHONY: run-examples
 run-examples: format ## Run the examples
 	@echo "Running the examples..."
-	@DEBUG_HANN=$(DEBUG_HANN) $(GO) run $(EXAMPLES_DIR)/simple_hnsw.go
-	@DEBUG_HANN=$(DEBUG_HANN) $(GO) run $(EXAMPLES_DIR)/hnsw.go
-	@DEBUG_HANN=$(DEBUG_HANN) $(GO) run $(EXAMPLES_DIR)/pqivf.go
-	@DEBUG_HANN=$(DEBUG_HANN) $(GO) run $(EXAMPLES_DIR)/rpt.go
+	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/simple_hnsw.go
+	@HANN_LOG=$(HANN_LOG) HANN_SEED=$(HANN_SEED) $(GO) run $(EXAMPLES_DIR)/hnsw.go
+	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/pqivf.go
+	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/rpt.go
+
+.PHONY: run-examples-large
+run-examples-large: format ## Run the examples (large datasets)
+	@echo "Running the examples that use large datasets..."
+	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/hnsw_large.go
+	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/pqivf_large.go
+	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/rpt_large.go

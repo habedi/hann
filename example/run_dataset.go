@@ -42,8 +42,8 @@ func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxRe
 	log.Info().Msgf("Loaded %d test vectors", len(testVectors))
 
 	stats := index.Stats()
-	fmt.Printf("Indexed %d vectors (%d dimensions) in %.2fs; index size: %.2f mb; distance: %s\n",
-		stats.Count, stats.Dimension, time.Since(start).Seconds(), float64(stats.Size)/1e6, stats.Distance)
+	fmt.Printf("Indexed %d vectors (%d dimensions) in %.2fs; distance: %s\n",
+		stats.Count, stats.Dimension, time.Since(start).Seconds(), stats.Distance)
 
 	fmt.Printf("Running kNN search (k=%d) on first %d test queries\n", k, numQueries)
 	for i := 0; i < numQueries && i < len(testVectors); i++ {

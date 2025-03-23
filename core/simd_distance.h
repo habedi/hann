@@ -19,12 +19,6 @@ float simd_manhattan(const float* a, const float* b, size_t n);
 // Computes the cosine distance between two float arrays using AVX.
 float simd_cosine_distance(const float* a, const float* b, size_t n);
 
-// Computes the angular distance (in radians) between two float arrays using AVX.
-float simd_angular_distance(const float* a, const float* b, size_t n);
-
-// Computes the dot product distance between two float arrays using AVX.
-float simd_dot_product_distance(const float* a, const float* b, size_t n);
-
 #ifdef __cplusplus
 }
 #endif

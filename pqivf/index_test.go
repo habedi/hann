@@ -13,8 +13,11 @@ func TestPQIVF_BasicOperations(t *testing.T) {
 	dim := 6
 	coarseK := 3
 	numSubquantizers := 2
+	pqK := 256
+	kMeansIters := 10
 	distanceName := "euclidean"
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers,
+
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters,
 		core.Distances[distanceName], distanceName)
 
 	// Test Add.
@@ -47,7 +50,9 @@ func TestPQIVF_Search(t *testing.T) {
 	dim := 6
 	coarseK := 3
 	numSubquantizers := 2
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, core.Euclidean, "euclidean")
+	pqK := 256
+	kMeansIters := 10
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean, "euclidean")
 
 	// Insert several vectors.
 	vectors := map[int][]float32{
@@ -80,7 +85,9 @@ func TestPQIVF_BulkOperations(t *testing.T) {
 	dim := 6
 	coarseK := 3
 	numSubquantizers := 2
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, core.Euclidean, "euclidean")
+	pqK := 256
+	kMeansIters := 10
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean, "euclidean")
 
 	// BulkAdd a set of vectors.
 	vectors := map[int][]float32{
@@ -138,7 +145,9 @@ func TestPQIVF_SaveLoad(t *testing.T) {
 	dim := 6
 	coarseK := 3
 	numSubquantizers := 2
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, core.Euclidean, "euclidean")
+	pqK := 256
+	kMeansIters := 10
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean, "euclidean")
 
 	// Insert a couple of vectors.
 	vectors := map[int][]float32{
@@ -158,7 +167,7 @@ func TestPQIVF_SaveLoad(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	newIdx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, core.Euclidean, "euclidean")
+	newIdx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean, "euclidean")
 	if err := newIdx.Load(filePath); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -172,7 +181,9 @@ func TestPQIVF_ConcurrentOperations(t *testing.T) {
 	dim := 6
 	coarseK := 3
 	numSubquantizers := 2
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, core.Euclidean, "euclidean")
+	pqK := 256
+	kMeansIters := 10
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean, "euclidean")
 	numVectors := 1000
 	var wg sync.WaitGroup
 

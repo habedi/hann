@@ -19,24 +19,24 @@ Hann is a high-performance approximate nearest neighbor search (ANN) library for
 It provides a collection of index data structures for efficient similarity search in high-dimensional spaces.
 
 Hann can be seen as a core component of a vector database (e.g., Milvus, Weaviate, Qdrant, etc.).
-It can be used to add fast in-memory similarity search capabilities for high-dimensional data to your Go applications.
+It can be used to add fast in-memory similarity search capabilities to your Go applications.
 
 ### Features
 
 - Unified interface for different index data structures (see [core/index.go](core/index.go))
 - Support for indexing and searching vectors of arbitrary dimension
-- Support for different distances (see [core/distance.go](core/distance.go))
+- Support for different distances like Euclidean, Manhattan, and cosine distances (see [core/distance.go](core/distance.go))
 - Fast distance computation using SIMD (AVX) instructions (see [core/simd_distance.c](core/simd_distance.c))
-- Bulk insertion and deletion support
-- Support for loading and saving indexes to disk
+- Support for bulk insertion, deletion, and update of vectors
+- Support for saving indexes to disk and loading them back
 
 #### Supported Indexes
 
-| Index Name                                            | Space Complexity | Build Complexity | Search Complexity                             |
+| Index Name                                            | Space Complexity | Build Complexity | Search Complexity                             | 
 |-------------------------------------------------------|------------------|------------------|-----------------------------------------------|
-| [HNSW](https://arxiv.org/abs/1603.09320)              | $O(n(d + M))$    | $O(n \log n)$    | $O(\log n)$ average case<br>$O(n)$ worst case |
-| [PQIVF](https://ieeexplore.ieee.org/document/5432202) | $O(nd + kd)$     | $O(nki)$         | $O(\frac{n}{k})$                              |
-| [RPT](https://dl.acm.org/doi/10.1145/1374376.1374452) | $O(nd)$          | $O(n \log n)$    | $O(\log n)$ average case<br>$O(n)$ worst case |
+| [HNSW](https://arxiv.org/abs/1603.09320)              | $O(nd + nM)$     | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case | 
+| [PQIVF](https://ieeexplore.ieee.org/document/5432202) | $O(nk + kd)$     | $O(nki)$         | $O(\frac{n}{k})$                              | 
+| [RPT](https://dl.acm.org/doi/10.1145/1374376.1374452) | $O(nd)$          | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case | 
 
 - $n$: number of vectors
 - $d$: number of dimensions (vector length)
@@ -44,29 +44,32 @@ It can be used to add fast in-memory similarity search capabilities for high-dim
 - $k$: number of clusters (in PQIVF)
 - $i$: iterations for clustering (in PQIVF)
 
-> [!NOTE]
-> Currently, Hann supports only the Euclidean distance for indexing and search.
+#### Supported Distances
+
+The indexes support the use of Euclidean, squared Euclidean, Manhattan, and cosine distances.
+If cosine distance is used, the vectors are normalized before they are used in the index or for search.
 
 ### Installation
 
-Hann can be installed as a normal Go module using the following command:
+Hann can be installed as a typical Go module using the following command:
 
 ```bash
 go get github.com/habedi/hann@main
 ```
 
-*Hann requires Go 1.21 or newer, and a CPU with AVX support.*
+*Hann requires Go 1.21 or later, and a CPU with AVX support.*
 
 ### Examples
-
-Check out the [example](example) directory for usage examples.
 
 | Example File                                 | Description                                                               |
 |----------------------------------------------|---------------------------------------------------------------------------|
 | [simple_hnsw.go](example/cmd/simple_hnsw.go) | Create and use an HNSW index with inline data                             |
 | [hnsw.go](example/cmd/hnsw.go)               | Create and use an HNSW index                                              |
+| [hnsw_large.go](example/cmd/hnsw_large.go)   | Create and use an HNSW index (using large datasets)                       |
 | [pqivf.go](example/cmd/pqivf.go)             | Create and use a PQIVF index                                              |
+| [pqivf_large.go](example/cmd/pqivf_large.go) | Create and use a PQIVF index (using large datasets)                       |
 | [rpt.go](example/cmd/rpt.go)                 | Create and use an RPT index                                               |
+| [rpt_large.go](example/cmd/rpt_large.go)     | Create and use an RPT index (using large datasets)                        |
 | [load_data.go](example/load_data.go)         | Helper functions to load datasets for the examples                        |
 | [utils.go](example/utils.go)                 | Extra helper functions for the examples                                   |
 | [run_datasets.go](example/run_dataset.go)    | The code to create different indexes and try them with different datasets |
@@ -79,7 +82,31 @@ You can download the datasets used in the examples using the following commands:
 make download-data
 ```
 
+```shell
+# Only needed to run the examples that use large datasets
+make download-data-large
+```
+
+Note that to run the examples using the large datasets, you may need a machine with large amounts of memory to build the
+indexes.
+
 See the [data](example/data) directory for information about the datasets.
+
+### Documentation
+
+The documentation for Hann can be found on [pkg.go.dev](https://pkg.go.dev/github.com/habedi/hann).
+
+#### Logging
+
+You can control the logging behavior of Hann using the `HANN_LOG` environment variable.
+
+- `0`, `false`, or `off` to disable logging altogether
+- `full` or `all` to enable full logging (`DEBUG` level)
+- Any other value to enable basic logging (`INFO` level; default behavior)
+
+#### Random Seed
+
+You can make the indexes deterministic by setting the `HANN_SEED` environment variable to am integer value.
 
 ### Contributing
 
