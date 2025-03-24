@@ -33,7 +33,7 @@ would like to work on or if it has already been resolved.
 Install system dependencies (Go and GNU Make).
 
 ```shell
-sudo apt-get install golang-go make
+sudo apt-get install -y golang-go make gcc # or clang
 ```
 
 - Use the `make install-deps` command to install the development dependencies.

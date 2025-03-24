@@ -13,11 +13,11 @@ import (
 )
 
 func main() {
-	// Set the logger to output to the console
+	// Set the logger to output to the console.
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	PQIVFIndexFashionMNIST("euclidean")
-	PQIVFIndexSIFT128("squared_euclidean")
+	PQIVFIndexSIFT("squared_euclidean")
 	PQIVFIndexGlove50("cosine")
 }
 
@@ -36,7 +36,7 @@ func PQIVFIndexFashionMNIST(distanceName string) {
 		"example/data/nearest-neighbors-datasets", 100, 5, 5)
 }
 
-func PQIVFIndexSIFT128(distanceName string) {
+func PQIVFIndexSIFT(distanceName string) {
 	factory := func() core.Index {
 		dimension := 128
 		coarseK := 16

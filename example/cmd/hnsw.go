@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	// Set the logger to output to the console
+	// Set the logger to output to the console.
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	HNSWIndexFashionMNIST("euclidean")

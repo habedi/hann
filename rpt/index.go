@@ -14,22 +14,28 @@ import (
 	"sync"
 )
 
-// Constants for the RPT index (can be tuned).
-const (
-	leafCapacity         = 10  // maximum points in a leaf node
-	candidateProjections = 3   // number of candidate projections tried per split
-	parallelThreshold    = 100 // if number of points > threshold, build children in parallel
-	probeMargin          = 0.15
-)
-
 // NewRPTIndex creates a new RPTIndex for vectors of the given dimension.
-func NewRPTIndex(dimension int, distance core.DistanceFunc, distanceName string) *RPTIndex {
+// The parameters leafCapacity, candidateProjections, parallelThreshold,
+// and probeMargin control the tree construction.
+func NewRPTIndex(
+	dimension int,
+	leafCapacity int,
+	candidateProjections int,
+	parallelThreshold int,
+	probeMargin float64,
+	distance core.DistanceFunc,
+	distanceName string,
+) *RPTIndex {
 	return &RPTIndex{
-		dimension:    dimension,
-		points:       make(map[int][]float32),
-		dirty:        true,
-		Distance:     distance,
-		DistanceName: distanceName,
+		dimension:            dimension,
+		points:               make(map[int][]float32),
+		dirty:                true,
+		LeafCapacity:         leafCapacity,
+		CandidateProjections: candidateProjections,
+		ParallelThreshold:    parallelThreshold,
+		ProbeMargin:          probeMargin,
+		Distance:             distance,
+		DistanceName:         distanceName,
 	}
 }
 
@@ -53,10 +59,20 @@ type RPTIndex struct {
 
 	Distance     core.DistanceFunc // internal distance function
 	DistanceName string            // human–readable name for the distance metric
+
+	// Configurable parameters
+	LeafCapacity         int
+	CandidateProjections int
+	ParallelThreshold    int
+	ProbeMargin          float64
 }
 
 // buildTreeRecursive recursively builds a treeNode from the given point IDs.
-func buildTreeRecursive(ids []int, points map[int][]float32, dimension int, distance core.DistanceFunc, rnd *rand.Rand) *treeNode {
+// It now takes leafCapacity, candidateProjections and parallelThreshold as parameters.
+func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
+	distance core.DistanceFunc, rnd *rand.Rand,
+	leafCapacity int, candidateProjections int, parallelThreshold int) *treeNode {
+
 	if len(ids) <= leafCapacity {
 		return &treeNode{
 			isLeaf: true,
@@ -139,21 +155,24 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int, dist
 	if len(ids) > parallelThreshold {
 		var wg sync.WaitGroup
 		wg.Add(2)
-		// Create new local rand instances for each goroutine.
 		leftRnd := rand.New(rand.NewSource(core.GetSeed()))
 		rightRnd := rand.New(rand.NewSource(core.GetSeed()))
 		go func() {
 			defer wg.Done()
-			leftChild = buildTreeRecursive(bestCandidate.leftIDs, points, dimension, distance, leftRnd)
+			leftChild = buildTreeRecursive(bestCandidate.leftIDs, points, dimension, distance,
+				leftRnd, leafCapacity, candidateProjections, parallelThreshold)
 		}()
 		go func() {
 			defer wg.Done()
-			rightChild = buildTreeRecursive(bestCandidate.rightIDs, points, dimension, distance, rightRnd)
+			rightChild = buildTreeRecursive(bestCandidate.rightIDs, points, dimension, distance,
+				rightRnd, leafCapacity, candidateProjections, parallelThreshold)
 		}()
 		wg.Wait()
 	} else {
-		leftChild = buildTreeRecursive(bestCandidate.leftIDs, points, dimension, distance, rnd)
-		rightChild = buildTreeRecursive(bestCandidate.rightIDs, points, dimension, distance, rnd)
+		leftChild = buildTreeRecursive(bestCandidate.leftIDs, points, dimension, distance, rnd,
+			leafCapacity, candidateProjections, parallelThreshold)
+		rightChild = buildTreeRecursive(bestCandidate.rightIDs, points, dimension, distance, rnd,
+			leafCapacity, candidateProjections, parallelThreshold)
 	}
 
 	return &treeNode{
@@ -175,12 +194,14 @@ func (r *RPTIndex) buildTree() {
 		ids[i], ids[j] = ids[j], ids[i]
 	})
 	localRand := rand.New(rand.NewSource(core.GetSeed()))
-	r.tree = buildTreeRecursive(ids, r.points, r.dimension, r.Distance, localRand)
+	r.tree = buildTreeRecursive(ids, r.points, r.dimension, r.Distance, localRand, r.LeafCapacity,
+		r.CandidateProjections, r.ParallelThreshold)
 	r.dirty = false
 }
 
 // searchTreeMultiProbeWithMargin recursively traverses the tree to find candidate point IDs.
-func searchTreeMultiProbeWithMargin(node *treeNode, query []float32, dimension int, distance core.DistanceFunc, margin float64) []int {
+func searchTreeMultiProbeWithMargin(node *treeNode, query []float32, dimension int,
+	distance core.DistanceFunc, margin float64) []int {
 	if node == nil {
 		return nil
 	}
@@ -253,7 +274,8 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	r.mu.RLock()
 	if len(query) != r.dimension {
 		r.mu.RUnlock()
-		return nil, fmt.Errorf("query dimension %d does not match index dimension %d", len(query), r.dimension)
+		return nil, fmt.Errorf("query dimension %d does not match index dimension %d",
+			len(query), r.dimension)
 	}
 	if len(r.points) == 0 {
 		r.mu.RUnlock()
@@ -276,9 +298,11 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 		r.mu.Unlock()
 		r.mu.RLock()
 	}
-	candidateIDs := searchTreeMultiProbeWithMargin(r.tree, query, r.dimension, r.Distance, probeMargin)
+	candidateIDs := searchTreeMultiProbeWithMargin(r.tree, query, r.dimension, r.Distance,
+		r.ProbeMargin)
 	if len(candidateIDs) < k*2 {
-		candidateIDsAlt := searchTreeMultiProbeWithMargin(r.tree, query, r.dimension, r.Distance, probeMargin*2)
+		candidateIDsAlt := searchTreeMultiProbeWithMargin(r.tree, query, r.dimension, r.Distance,
+			r.ProbeMargin*2)
 		candidateIDs = unionInts(candidateIDs, candidateIDsAlt)
 	}
 	r.mu.RUnlock()
@@ -314,12 +338,12 @@ func (r *RPTIndex) Add(id int, vector []float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(vector) != r.dimension {
-		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), r.dimension)
+		return fmt.Errorf("vector dimension %d does not match index dimension %d",
+			len(vector), r.dimension)
 	}
 	if _, exists := r.points[id]; exists {
 		return fmt.Errorf("id %d already exists", id)
 	}
-	// Normalize vector if using cosine distance.
 	if r.DistanceName == "cosine" {
 		core.NormalizeVector(vector)
 	}
@@ -332,12 +356,12 @@ func (r *RPTIndex) Add(id int, vector []float32) error {
 func (r *RPTIndex) BulkAdd(vectors map[int][]float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// If using cosine distance, perform bulk normalization.
 	if r.DistanceName == "cosine" {
 		var vecs [][]float32
 		for id, vector := range vectors {
 			if len(vector) != r.dimension {
-				return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), r.dimension, id)
+				return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
+					len(vector), r.dimension, id)
 			}
 			vecs = append(vecs, vector)
 		}
@@ -345,7 +369,8 @@ func (r *RPTIndex) BulkAdd(vectors map[int][]float32) error {
 	}
 	for id, vector := range vectors {
 		if len(vector) != r.dimension {
-			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), r.dimension, id)
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
+				len(vector), r.dimension, id)
 		}
 		if _, exists := r.points[id]; exists {
 			return fmt.Errorf("id %d already exists", id)
@@ -384,7 +409,8 @@ func (r *RPTIndex) Update(id int, vector []float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(vector) != r.dimension {
-		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), r.dimension)
+		return fmt.Errorf("vector dimension %d does not match index dimension %d",
+			len(vector), r.dimension)
 	}
 	if _, exists := r.points[id]; !exists {
 		return fmt.Errorf("id %d not found", id)
@@ -401,12 +427,12 @@ func (r *RPTIndex) Update(id int, vector []float32) error {
 func (r *RPTIndex) BulkUpdate(updates map[int][]float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// If using cosine distance, perform bulk normalization.
 	if r.DistanceName == "cosine" {
 		var vecs [][]float32
 		for id, vector := range updates {
 			if len(vector) != r.dimension {
-				return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), r.dimension, id)
+				return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
+					len(vector), r.dimension, id)
 			}
 			vecs = append(vecs, vector)
 		}
@@ -414,7 +440,8 @@ func (r *RPTIndex) BulkUpdate(updates map[int][]float32) error {
 	}
 	for id, vector := range updates {
 		if len(vector) != r.dimension {
-			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), r.dimension, id)
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
+				len(vector), r.dimension, id)
 		}
 		if _, exists := r.points[id]; !exists {
 			return fmt.Errorf("id %d not found", id)
@@ -438,7 +465,6 @@ func (r *RPTIndex) Stats() core.IndexStats {
 }
 
 // ----- Persistence -----
-//
 // We persist only the points and dimension; the tree is rebuilt on demand.
 type rptSerialized struct {
 	Dimension    int

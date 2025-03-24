@@ -30,7 +30,8 @@ func TestNormalizeVector(t *testing.T) {
 
 		for i := range tt.vec {
 			if math.Abs(float64(tt.vec[i]-tt.expected[i])) > 1e-5 {
-				t.Errorf("NormalizeVector failed.\nGot:      %v\nExpected: %v", tt.vec, tt.expected)
+				t.Errorf("NormalizeVector failed.\nGot:      %v\nExpected: %v",
+					tt.vec, tt.expected)
 				break
 			}
 		}
@@ -55,7 +56,8 @@ func TestNormalizeBatch(t *testing.T) {
 	for idx, vec := range vecs {
 		for i := range vec {
 			if math.Abs(float64(vec[i]-expected[idx][i])) > 1e-5 {
-				t.Errorf("NormalizeBatch failed at vector %d.\nGot:      %v\nExpected: %v", idx, vec, expected[idx])
+				t.Errorf("NormalizeBatch failed at vector %d.\nGot:      %v\nExpected: %v",
+					idx, vec, expected[idx])
 				break
 			}
 		}
@@ -90,7 +92,8 @@ func TestNormalizeBatchLarge(t *testing.T) {
 	for idx, vec := range vecs {
 		for i := range vec {
 			if math.Abs(float64(vec[i]-expected[i])) > 1e-5 {
-				t.Errorf("NormalizeBatchLarge failed at vector %d.\nGot:      %v\nExpected: %v", idx, vec, expected)
+				t.Errorf("NormalizeBatchLarge failed at vector %d.\nGot:      %v\nExpected: %v",
+					idx, vec, expected)
 				break
 			}
 		}

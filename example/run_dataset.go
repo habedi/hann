@@ -55,7 +55,8 @@ func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxRe
 		recall := RecallAtK(results, gtNeighbors[i], k)
 		fmt.Printf("Query #%d:\n", i+1)
 		fmt.Printf(" -> Predicted:     %s\n", FormatResults(results, maxResults))
-		fmt.Printf(" -> Ground-truth:  %s\n", FormatGroundTruth(gtNeighbors[i], gtDistances[i], k, maxResults))
+		fmt.Printf(" -> Ground-truth:  %s\n", FormatGroundTruth(gtNeighbors[i],
+			gtDistances[i], k, maxResults))
 		fmt.Printf(" -> Recall@%d:     %.2f\n", k, recall)
 	}
 }

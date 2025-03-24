@@ -300,6 +300,7 @@ func TestHNSWIndex_ConcurrentBulkOperations(t *testing.T) {
 	expected := numVectors - len(deleteIDs)
 	stats := index.Stats()
 	if stats.Count != expected {
-		t.Errorf("expected count %d after concurrent bulk operations, got %d", expected, stats.Count)
+		t.Errorf("expected count %d after concurrent bulk operations, got %d", expected,
+			stats.Count)
 	}
 }

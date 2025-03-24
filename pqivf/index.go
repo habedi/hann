@@ -51,7 +51,8 @@ type PQIVFIndex struct {
 }
 
 // NewPQIVFIndex creates a new PQIVF index with the given parameters.
-func NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters int, distance core.DistanceFunc, distanceName string) *PQIVFIndex {
+func NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters int,
+	distance core.DistanceFunc, distanceName string) *PQIVFIndex {
 	return &PQIVFIndex{
 		dimension:        dimension,
 		coarseK:          coarseK,
@@ -115,7 +116,8 @@ func (pq *PQIVFIndex) Add(id int, vector []float32) error {
 	defer pq.mu.Unlock()
 
 	if len(vector) != pq.dimension {
-		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), pq.dimension)
+		return fmt.Errorf("vector dimension %d does not match index dimension %d",
+			len(vector), pq.dimension)
 	}
 	if _, exists := pq.idToCluster[id]; exists {
 		return fmt.Errorf("id %d already exists", id)
@@ -166,7 +168,8 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 		var vecs [][]float32
 		for id, vector := range vectors {
 			if len(vector) != pq.dimension {
-				return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), pq.dimension, id)
+				return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
+					len(vector), pq.dimension, id)
 			}
 			vecs = append(vecs, vector)
 		}
@@ -175,7 +178,8 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 
 	for id, vector := range vectors {
 		if len(vector) != pq.dimension {
-			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), pq.dimension, id)
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
+				len(vector), pq.dimension, id)
 		}
 		if _, exists := pq.idToCluster[id]; exists {
 			return fmt.Errorf("id %d already exists", id)
@@ -486,7 +490,8 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	defer pq.mu.RUnlock()
 
 	if len(query) != pq.dimension {
-		return nil, fmt.Errorf("query dimension %d does not match index dimension %d", len(query), pq.dimension)
+		return nil, fmt.Errorf("query dimension %d does not match index dimension %d",
+			len(query), pq.dimension)
 	}
 	// Normalize the query if using cosine distance.
 	queryCopy := make([]float32, len(query))

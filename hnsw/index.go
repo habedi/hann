@@ -88,8 +88,10 @@ type HNSWIndex struct {
 }
 
 // NewHNSW creates a new HNSW index with the given parameters.
-func NewHNSW(dimension int, M int, ef int, distance core.DistanceFunc, distanceName string) *HNSWIndex {
-	log.Info().Msgf("Creating new HNSW index with dimension=%d, M=%d, ef=%d, distance=%s", dimension, M, ef, distanceName)
+func NewHNSW(dimension int, M int, ef int, distance core.DistanceFunc,
+	distanceName string) *HNSWIndex {
+	log.Info().Msgf("Creating new HNSW index with dimension=%d, M=%d, ef=%d, distance=%s",
+		dimension, M, ef, distanceName)
 	return &HNSWIndex{
 		Dimension:    dimension,
 		Nodes:        make(map[int]*Node),
@@ -315,7 +317,8 @@ func (h *HNSWIndex) insertNode(n *Node, searchEf int) {
 	}
 }
 
-func (h *HNSWIndex) searchLayer(query []float32, entrypoint *Node, level int, ef int, distance func([]float32, []float32) float64) []candidate {
+func (h *HNSWIndex) searchLayer(query []float32, entrypoint *Node, level int, ef int,
+	distance func([]float32, []float32) float64) []candidate {
 	visited := map[int]bool{entrypoint.ID: true}
 	d0 := distance(query, entrypoint.Vector)
 	candQueue := candidateMinHeap{{entrypoint, d0}}
@@ -359,7 +362,8 @@ func (h *HNSWIndex) Add(id int, vector []float32) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 	if len(vector) != h.Dimension {
-		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), h.Dimension)
+		return fmt.Errorf("vector dimension %d does not match index dimension %d",
+			len(vector), h.Dimension)
 	}
 	if h.DistanceName == "cosine" {
 		// Normalize before storing.
@@ -410,7 +414,8 @@ func (h *HNSWIndex) Update(id int, vector []float32) error {
 		return fmt.Errorf("id %d not found", id)
 	}
 	if len(vector) != h.Dimension {
-		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), h.Dimension)
+		return fmt.Errorf("vector dimension %d does not match index dimension %d",
+			len(vector), h.Dimension)
 	}
 	if h.DistanceName == "cosine" {
 		core.NormalizeVector(vector)
@@ -430,7 +435,8 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 		var vecs [][]float32
 		for _, vector := range vectors {
 			if len(vector) != h.Dimension {
-				return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), h.Dimension)
+				return fmt.Errorf("vector dimension %d does not match index dimension %d",
+					len(vector), h.Dimension)
 			}
 			vecs = append(vecs, vector)
 		}
@@ -440,7 +446,8 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 	nodesSlice := make([]*Node, 0, len(vectors))
 	for id, vector := range vectors {
 		if len(vector) != h.Dimension {
-			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), h.Dimension, id)
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
+				len(vector), h.Dimension, id)
 		}
 		if _, exists := h.Nodes[id]; exists {
 			return fmt.Errorf("id %d already exists", id)
@@ -519,7 +526,8 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 		var vecs [][]float32
 		for _, vector := range updates {
 			if len(vector) != h.Dimension {
-				return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), h.Dimension)
+				return fmt.Errorf("vector dimension %d does not match index dimension %d",
+					len(vector), h.Dimension)
 			}
 			vecs = append(vecs, vector)
 		}
@@ -535,7 +543,8 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 			continue
 		}
 		if len(vector) != h.Dimension {
-			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d", len(vector), h.Dimension, id)
+			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
+				len(vector), h.Dimension, id)
 		}
 		h.removeNodeLinks(node)
 		node.Vector = vector
@@ -570,7 +579,8 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	h.Mu.RLock()
 	defer h.Mu.RUnlock()
 	if len(query) != h.Dimension {
-		return nil, fmt.Errorf("query dimension %d does not match index dimension %d", len(query), h.Dimension)
+		return nil, fmt.Errorf("query dimension %d does not match index dimension %d",
+			len(query), h.Dimension)
 	}
 	if h.EntryPoint == nil {
 		return nil, errors.New("index is empty")

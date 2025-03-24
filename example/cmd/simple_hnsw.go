@@ -13,12 +13,12 @@ import (
 	"github.com/habedi/hann/hnsw"
 )
 
-// Note: results may vary slightly between different runs.
-// That's expected of HNSW index as it uses randomization internally (like random level assignment).
+// Note: results may vary slightly between different runs if HANN_SEED is not set.
+// That's expected as the HNSW index uses randomization internally (like random level assignment).
 
 func main() {
 
-	// Set the logger to output to the console
+	// Set the logger to output to the console.
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	// Index parameters.

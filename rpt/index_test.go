@@ -9,11 +9,18 @@ import (
 	"github.com/habedi/hann/rpt"
 )
 
+const (
+	defaultLeafCapacity         = 10
+	defaultCandidateProjections = 3
+	defaultParallelThreshold    = 100
+	defaultProbeMargin          = 0.15
+)
+
 func TestRPTIndex_BasicOperations(t *testing.T) {
 	dim := 6
 	distanceName := "euclidean"
-	// Pass core.Euclidean and "euclidean" as the distance function and name.
-	idx := rpt.NewRPTIndex(dim, core.Distances[distanceName], distanceName)
+	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, distanceName)
 
 	// Test Add.
 	vec1 := []float32{1, 2, 3, 4, 5, 6}
@@ -25,10 +32,21 @@ func TestRPTIndex_BasicOperations(t *testing.T) {
 		t.Errorf("expected count 1, got %d", stats.Count)
 	}
 
+	// Test duplicate add returns error.
+	if err := idx.Add(1, vec1); err == nil {
+		t.Errorf("expected error when adding duplicate id, but got none")
+	}
+
 	// Test Update.
 	vec1upd := []float32{6, 5, 4, 3, 2, 1}
 	if err := idx.Update(1, vec1upd); err != nil {
 		t.Fatalf("Update failed: %v", err)
+	}
+
+	// Test Update with wrong dimension.
+	wrongDim := []float32{1, 2, 3}
+	if err := idx.Update(1, wrongDim); err == nil {
+		t.Errorf("expected error on update with wrong dimension, but got none")
 	}
 
 	// Test Delete.
@@ -39,11 +57,17 @@ func TestRPTIndex_BasicOperations(t *testing.T) {
 	if stats.Count != 0 {
 		t.Errorf("expected count 0 after delete, got %d", stats.Count)
 	}
+
+	// Test Delete on non-existing id.
+	if err := idx.Delete(1); err == nil {
+		t.Errorf("expected error on deleting non-existent id, but got none")
+	}
 }
 
 func TestRPTIndex_Search(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, core.Euclidean, "euclidean")
+	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
 
 	// Insert several vectors.
 	vectors := map[int][]float32{
@@ -53,9 +77,14 @@ func TestRPTIndex_Search(t *testing.T) {
 		4: {2, 2, 2, 2, 2, 2},
 		5: {1, 2, 2, 3, 4, 5},
 	}
-	// Use BulkAdd for convenience.
 	if err := idx.BulkAdd(vectors); err != nil {
 		t.Fatalf("BulkAdd failed: %v", err)
+	}
+
+	// Test error when query dimension mismatches.
+	wrongQuery := []float32{1, 2, 3}
+	if _, err := idx.Search(wrongQuery, 3); err == nil {
+		t.Errorf("expected error for query dimension mismatch, but got none")
 	}
 
 	query := []float32{1, 2, 3, 4, 5, 6}
@@ -81,7 +110,8 @@ func TestRPTIndex_Search(t *testing.T) {
 
 func TestRPTIndex_BulkOperations(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, core.Euclidean, "euclidean")
+	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
 
 	// BulkAdd several vectors.
 	vectors := map[int][]float32{
@@ -107,7 +137,7 @@ func TestRPTIndex_BulkOperations(t *testing.T) {
 		t.Fatalf("BulkUpdate failed: %v", err)
 	}
 
-	// Verify an update via search.
+	// Verify update via search.
 	query := []float32{1, 1, 1, 1, 1, 1}
 	neighbors, err := idx.Search(query, 3)
 	if err != nil {
@@ -137,7 +167,8 @@ func TestRPTIndex_BulkOperations(t *testing.T) {
 
 func TestRPTIndex_SaveLoad(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, core.Euclidean, "euclidean")
+	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
 	// Insert a couple of vectors.
 	vectors := map[int][]float32{
 		1: {1, 2, 3, 4, 5, 6},
@@ -154,7 +185,8 @@ func TestRPTIndex_SaveLoad(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	newIdx := rpt.NewRPTIndex(dim, core.Euclidean, "euclidean")
+	newIdx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
 	if err := newIdx.Load(filePath); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -166,7 +198,8 @@ func TestRPTIndex_SaveLoad(t *testing.T) {
 
 func TestRPTIndex_ConcurrentOperations(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, core.Euclidean, "euclidean")
+	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
 	numVectors := 1000
 	var wg sync.WaitGroup
 
@@ -192,5 +225,26 @@ func TestRPTIndex_ConcurrentOperations(t *testing.T) {
 	stats := idx.Stats()
 	if stats.Count != numVectors {
 		t.Errorf("expected %d vectors, got %d", numVectors, stats.Count)
+	}
+}
+
+func TestRPTIndex_ErrorOnWrongVectorDimension(t *testing.T) {
+	dim := 6
+	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
+
+	// Test Add with wrong vector dimension.
+	wrongVec := []float32{1, 2, 3}
+	if err := idx.Add(1, wrongVec); err == nil {
+		t.Errorf("expected error for wrong vector dimension in Add, but got none")
+	}
+
+	// Test BulkAdd with one vector having the wrong dimension.
+	vectors := map[int][]float32{
+		1: {1, 2, 3, 4, 5, 6},
+		2: {1, 2, 3}, // wrong dimension
+	}
+	if err := idx.BulkAdd(vectors); err == nil {
+		t.Errorf("expected error for wrong vector dimension in BulkAdd, but got none")
 	}
 }

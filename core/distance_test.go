@@ -67,16 +67,20 @@ func TestDistanceFunctions(t *testing.T) {
 
 			// Assert: compare computed values with expected ones.
 			if !almostEqual(euclid, tt.expectedEuclidean, 1e-6) {
-				t.Errorf("Euclidean(%v, %v) = %v; want %v", tt.a, tt.b, euclid, tt.expectedEuclidean)
+				t.Errorf("Euclidean(%v, %v) = %v; want %v", tt.a, tt.b, euclid,
+					tt.expectedEuclidean)
 			}
 			if !almostEqual(sqEuclid, tt.expectedSquaredEuclidean, 1e-6) {
-				t.Errorf("SquaredEuclidean(%v, %v) = %v; want %v", tt.a, tt.b, sqEuclid, tt.expectedSquaredEuclidean)
+				t.Errorf("SquaredEuclidean(%v, %v) = %v; want %v", tt.a, tt.b, sqEuclid,
+					tt.expectedSquaredEuclidean)
 			}
 			if !almostEqual(manhattan, tt.expectedManhattan, 1e-6) {
-				t.Errorf("Manhattan(%v, %v) = %v; want %v", tt.a, tt.b, manhattan, tt.expectedManhattan)
+				t.Errorf("Manhattan(%v, %v) = %v; want %v", tt.a, tt.b, manhattan,
+					tt.expectedManhattan)
 			}
 			if !almostEqual(cosine, tt.expectedCosineDistance, 1e-6) {
-				t.Errorf("CosineDistance(%v, %v) = %v; want %v", tt.a, tt.b, cosine, tt.expectedCosineDistance)
+				t.Errorf("CosineDistance(%v, %v) = %v; want %v", tt.a, tt.b, cosine,
+					tt.expectedCosineDistance)
 			}
 		})
 	}
