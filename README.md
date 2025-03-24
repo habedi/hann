@@ -107,6 +107,7 @@ You can control the logging behavior of Hann using the `HANN_LOG` environment va
 #### Random Seed
 
 You can make the indexes deterministic by setting the `HANN_SEED` environment variable to am integer value.
+The value is used to initialize the random number generator used by the indexes.
 
 ### Contributing
 
