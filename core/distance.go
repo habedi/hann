@@ -10,6 +10,15 @@ import (
 	"unsafe"
 )
 
+// Distances is a map of human–readable names to distance functions.
+// You can use it to choose a distance metric by name.
+var Distances = map[string]DistanceFunc{
+	"euclidean":         Euclidean,
+	"squared_euclidean": SquaredEuclidean,
+	"manhattan":         Manhattan,
+	"cosine":            CosineDistance,
+}
+
 // DistanceFunc computes the distance between two vectors.
 // a: the first vector.
 // b: the second vector.
@@ -78,13 +87,4 @@ func CosineDistance(a, b []float32) float64 {
 		(*C.float)(unsafe.Pointer(&b[0])),
 		n,
 	))
-}
-
-// Distances is a map of human–readable names to distance functions.
-// You can use it to choose a distance metric by name.
-var Distances = map[string]DistanceFunc{
-	"euclidean":         Euclidean,
-	"squared_euclidean": SquaredEuclidean,
-	"manhattan":         Manhattan,
-	"cosine":            CosineDistance,
 }
