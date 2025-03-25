@@ -16,8 +16,9 @@ func main() {
 	// Set the logger to output to the console.
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
+	// Using HNSW index with FashionMNIST and Glove25 datasets
 	HNSWIndexFashionMNIST("euclidean")
-	HNSWIndexGlove100("cosine")
+	HNSWIndexGlove25("cosine")
 }
 
 func HNSWIndexFashionMNIST(distanceName string) {
@@ -32,14 +33,14 @@ func HNSWIndexFashionMNIST(distanceName string) {
 		"example/data/nearest-neighbors-datasets", 100, 5, 5)
 }
 
-func HNSWIndexGlove100(distanceName string) {
+func HNSWIndexGlove25(distanceName string) {
 	factory := func() core.Index {
-		dimension := 100
+		dimension := 25
 		M := 16
 		ef := 64
 		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
 	}
 
-	example.RunDataset(factory, "glove-100-angular",
+	example.RunDataset(factory, "glove-25-angular",
 		"example/data/nearest-neighbors-datasets", 100, 5, 5)
 }

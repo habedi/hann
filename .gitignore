@@ -79,11 +79,13 @@ coverage.html
 # Miscellaneous files and directories to ignore
 # Add any additional file patterns a directory names that should be ignored down here
 *.log
-bin/
 template-go-project
 *.gob
 *.bin
 *.index
+*.pb\.gz
+*_prof
+*_prof.go
 
 # Ignore the directories where the data for the examples is stored
 example/data/nearest-neighbors-datasets

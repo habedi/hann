@@ -23,18 +23,16 @@ A fast approximate nearest neighbor search library for Go
 
 Hann is a high-performance approximate nearest neighbor search (ANN) library for Go.
 It provides a collection of index data structures for efficient similarity search in high-dimensional spaces.
-Currently, supported indexes include *Hierarchical Navigable Small World (HNSW)*,
-*Product Quantization Inverted File (PQIVF)*, and *Random Projection Tree (RPT)*.
+Currently, supported indexes include Hierarchical Navigable Small World (HNSW),
+Product Quantization Inverted File (PQIVF), and Random Projection Tree (RPT).
 
-Hann can be seen as a core component of a vector database (e.g., Milvus, Weaviate, Qdrant, etc.).
+Hann can be seen as a core component of a vector database (like Milvus, Pinecone, Weaviate, Qdrant, etc.).
 It can be used to add fast in-memory similarity search capabilities to your Go applications.
 
 ### Features
 
-- Unified interface for different index data structures (see [core/index.go](core/index.go))
+- Unified interface for different indexes (see [core/index.go](core/index.go))
 - Support for indexing and searching vectors of arbitrary dimension
-- Support for different distances like Euclidean, Manhattan, and cosine distances
-- (see [core/distance.go](core/distance.go))
 - Fast distance computation using SIMD (AVX) instructions (see [core/simd_distance.c](core/simd_distance.c))
 - Support for bulk insertion, deletion, and update of vectors
 - Support for saving indexes to disk and loading them back
@@ -53,15 +51,16 @@ It can be used to add fast in-memory similarity search capabilities to your Go a
 - $k$: number of clusters (PQIVF)
 - $i$: iterations for clustering (PQIVF)
 
-#### Distances
+#### Supported Distances
 
-The indexes support the use of *Euclidean*, *squared Euclidean*, *Manhattan*, and *cosine* distances.
+The HNSW index supports the use of Euclidean, squared Euclidean, Manhattan, and cosine distances.
 If cosine distance is used, the vectors are normalized on read (before they are used in the index or for search).
-
-Note that squared Euclidean distance is faster to compute than Euclidean distance
+Note that squared Euclidean distance is slightly faster to compute than Euclidean distance
 and gives the same order of closest vectors as Euclidean distance.
 It can be used in place of Euclidean distance if only the order of closest vectors to
 query vector is needed, not the actual distances.
+
+The PQIVF and RPT indexes support Euclidean distance only.
 
 ### Installation
 
@@ -71,7 +70,7 @@ Hann can be installed as a typical Go module using the following command:
 go get github.com/habedi/hann@main
 ```
 
-Hann requires Go 1.21 or later, a C (or C++) compiler, and a CPU with AVX support.
+Hann requires Go 1.21 or later, a C (or C++) compiler, and a CPU that supports AVX instructions.
 
 ### Examples
 
@@ -84,13 +83,13 @@ Hann requires Go 1.21 or later, a C (or C++) compiler, and a CPU with AVX suppor
 | [pqivf_large.go](example/cmd/pqivf_large.go) | Create and use a PQIVF index (using large datasets)                       |
 | [rpt.go](example/cmd/rpt.go)                 | Create and use an RPT index                                               |
 | [rpt_large.go](example/cmd/rpt_large.go)     | Create and use an RPT index (using large datasets)                        |
-| [load_data.go](example/load_data.go)         | Helper functions to load datasets for the examples                        |
+| [load_data.go](example/load_data.go)         | Helper functions for loading example datasets                             |
 | [utils.go](example/utils.go)                 | Extra helper functions for the examples                                   |
 | [run_datasets.go](example/run_dataset.go)    | The code to create different indexes and try them with different datasets |
 
 #### Datasets
 
-The datasets used in the examples can be downloaded using the following commands:
+Use the following commands to download the datasets used in the examples:
 
 ```shell
 make download-data
@@ -104,13 +103,13 @@ make download-data-large
 Note that to run the examples using large datasets, possibly a machine with large amounts of memory is needed
 like 32 GB or more.
 
-See the [data](example/data) directory for information about the datasets.
+Check the [data](example/data) directory for information about the datasets.
 
 ---
 
 ### Documentation
 
-The detailed documentation for Hann packages can be found on [pkg.go.dev](https://pkg.go.dev/github.com/habedi/hann).
+The detailed documentation for Hann packages is available on [pkg.go.dev](https://pkg.go.dev/github.com/habedi/hann).
 
 #### HNSW Index
 
@@ -119,12 +118,12 @@ by [Malkov and Yashunin (2016)](https://arxiv.org/abs/1603.09320).
 HNSW organizes data into multiple layers of a proximity graph, which allows fast approximate nearest neighbor searches
 by greedily traversing the graph from top to bottom.
 
-The index can be configured using these parameters:
+The index has the following parameters:
 
 - **M**: Controls the maximum number of neighbor connections per node. Higher values improve accuracy but increase
-  memory and indexing time (typical range: 5–48; recommended default: 16).
-- **Ef (search parameter)**: Defines search breadth during insertion and searching. Higher values improve accuracy but
-  increase computational cost (typical range: 10–200; recommended default: 100).
+  memory and indexing time (typical range: 5–48).
+- **Ef**: Defines search breadth during insertion and searching. Higher values improve accuracy but
+  increase computational cost (typical range: 10–200).
 
 #### PQIVF Index
 
@@ -135,15 +134,15 @@ quantization](https://ieeexplore.ieee.org/document/5432202).
 This allows fast approximate nearest neighbor searches by limiting queries to relevant clusters and
 efficiently comparing compressed vectors, which reduces search time and storage requirements.
 
-The index can be configured using these parameters:
+The index has the following parameters:
 
 - **coarseK**: Controls the number of coarse clusters for initial quantization. Higher values improve search performance
-  but increase indexing time (typical range: 50–4096; recommended default: 256).
+  but increase indexing time (typical range: 50–4096).
 - **numSubquantizers**: Determines the number of subspaces for product quantization. More subquantizers improve
-  compression and accuracy at the cost of increased indexing time (typical range: 4–16; recommended default: 8).
+  compression and accuracy at the cost of increased indexing time (typical range: 4–16).
 - **pqK**: Sets the number of codewords per subquantizer. Higher values increase accuracy and storage usage (typical
-  default: 256).
-- **kMeansIters**: Number of iterations used to train the product quantization codebooks (recommended default: 25).
+  value: 256).
+- **kMeansIters**: Number of iterations used to train the product quantization codebooks (recommended value: 25).
 
 #### RPT Index
 
@@ -152,32 +151,33 @@ by [Dasgupta and Freund (2008)](https://dl.acm.org/doi/10.1145/1374376.1374452).
 RPT recursively partitions data using randomly generated hyperplanes to build a tree structure, which allows efficient
 approximate nearest neighbor searches through a tree traversal process.
 
-The index can be configured using these parameters:
+The index has the following parameters:
 
 - **leafCapacity**: Controls the maximum number of vectors stored in each leaf node. Lower values increase tree depth,
-  improving search speed but slightly increasing indexing time (typical range: 5–50; recommended default: 10).
+  improving search speed but slightly increasing indexing time (typical range: 5–50).
 - **candidateProjections**: Number of random projections considered at each tree split. Higher values improve split
-  quality at the cost of increased indexing time (typical range: 1–10; recommended default: 3).
+  quality at the cost of increased indexing time (typical range: 1–10).
 - **parallelThreshold**: Minimum number of vectors in a subtree to trigger parallel construction. Higher values lead to
-  better concurrency during indexing but use more memory (typical default: 100).
+  better concurrency during indexing but use more memory (typical value: 100).
 - **probeMargin**: Margin used to determine additional branches probed during searches. Higher values improve recall but
-  increase search overhead because of additional distance computations (typical range: 0.1–0.5; recommended default:
-  0.15).
+  increase search overhead because of additional distance computations (typical range: 0.1–0.5).
 
 #### Logging
 
 The verbosity level of logs produced by Hann can be controlled using the `HANN_LOG` environment variable.
 Possible values include:
 
-- `0`, `false`, or `off` to disable logging altogether
-- `full` or `all` to enable full logging (`DEBUG` level)
-- Any other value to enable basic logging (`INFO` level; default behavior)
+- `0`, `false`, or `off` to disable logging altogether;
+- `full` or `all` to enable full logging (`DEBUG` level);
+- Use any other value (including not setting the `HANN_LOG` environment variable) to enable basic logging (`INFO` level;
+  default behavior).
 
 #### Random Seed
 
-The indexing and searching operations can be deterministic by setting the `HANN_SEED` environment variable
-to an integer value.
-The value will be used to initialize the random number generator used by the indexes.
+For more consistent indexing and search results across different runs, set the `HANN_SEED` environment variable to an
+integer.
+This will initialize the random number generator, but some variations are still possible (for example, due to
+multithreading).
 
 ---
 

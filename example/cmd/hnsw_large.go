@@ -16,6 +16,7 @@ func main() {
 	// Set the logger to output to the console.
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
+	// Using HNSW index with GIST and DEEP1B datasets
 	HNSWIndexGIST("euclidean")
 	HNSWIndexDEEP1B("cosine")
 }

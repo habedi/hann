@@ -13,25 +13,25 @@ func NormalizeVector(vec []float32) {
 	if len(vec) == 0 {
 		return
 	}
-	C.avx_normalize((*C.float)(unsafe.Pointer(&vec[0])), C.int(len(vec)))
+	C.avx_normalize((*C.float)(unsafe.Pointer(&vec[0])), C.size_t(len(vec)))
 }
 
-// NormalizeBatch normalizes multiple vectors in a batch using goroutines.
+// NormalizeBatch normalizes multiple vectors in parallel using goroutines.
 func NormalizeBatch(vecs [][]float32) {
 	if len(vecs) == 0 || len(vecs[0]) == 0 {
 		return
 	}
 
-	// Create a channel to synchronize the goroutines.
+	// Make a channel to synchronize the goroutines.
 	done := make(chan struct{})
 	for i := range vecs {
 		go func(i int) {
-			C.avx_normalize((*C.float)(unsafe.Pointer(&vecs[i][0])), C.int(len(vecs[i])))
+			C.avx_normalize((*C.float)(unsafe.Pointer(&vecs[i][0])), C.size_t(len(vecs[i])))
 			done <- struct{}{}
 		}(i)
 	}
 
-	// Wait for all go routines to finish.
+	// Wait for all goroutines to finish.
 	for range vecs {
 		<-done
 	}

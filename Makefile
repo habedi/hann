@@ -91,8 +91,8 @@ download-data-large: ## Download the large datasets used in the examples
 .PHONY: run-examples
 run-examples: format ## Run the examples
 	@echo "Running the examples..."
-	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/simple_hnsw.go
-	@HANN_LOG=$(HANN_LOG) HANN_SEED=$(HANN_SEED) $(GO) run $(EXAMPLES_DIR)/hnsw.go
+	@HANN_LOG=$(HANN_LOG) HANN_SEED=$(HANN_SEED) $(GO) run $(EXAMPLES_DIR)/simple_hnsw.go
+	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/hnsw.go
 	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/pqivf.go
 	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/rpt.go
 

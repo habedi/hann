@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// GetSeed retrieves a seed value for random number generation from the HANN_SEED environment variable.
+// GetSeed receives a seed value for random number generation from the HANN_SEED environment variable.
 func GetSeed() int64 {
 	seedStr := os.Getenv("HANN_SEED")
 	if seedStr != "" {

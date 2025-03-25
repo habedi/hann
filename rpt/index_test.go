@@ -5,7 +5,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/rpt"
 )
 
@@ -18,9 +17,8 @@ const (
 
 func TestRPTIndex_BasicOperations(t *testing.T) {
 	dim := 6
-	distanceName := "euclidean"
 	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, distanceName)
+		defaultParallelThreshold, defaultProbeMargin)
 
 	// Test Add.
 	vec1 := []float32{1, 2, 3, 4, 5, 6}
@@ -67,7 +65,7 @@ func TestRPTIndex_BasicOperations(t *testing.T) {
 func TestRPTIndex_Search(t *testing.T) {
 	dim := 6
 	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
+		defaultParallelThreshold, defaultProbeMargin)
 
 	// Insert several vectors.
 	vectors := map[int][]float32{
@@ -111,7 +109,7 @@ func TestRPTIndex_Search(t *testing.T) {
 func TestRPTIndex_BulkOperations(t *testing.T) {
 	dim := 6
 	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
+		defaultParallelThreshold, defaultProbeMargin)
 
 	// BulkAdd several vectors.
 	vectors := map[int][]float32{
@@ -168,7 +166,7 @@ func TestRPTIndex_BulkOperations(t *testing.T) {
 func TestRPTIndex_SaveLoad(t *testing.T) {
 	dim := 6
 	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
+		defaultParallelThreshold, defaultProbeMargin)
 	// Insert a couple of vectors.
 	vectors := map[int][]float32{
 		1: {1, 2, 3, 4, 5, 6},
@@ -186,7 +184,7 @@ func TestRPTIndex_SaveLoad(t *testing.T) {
 	}
 
 	newIdx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
+		defaultParallelThreshold, defaultProbeMargin)
 	if err := newIdx.Load(filePath); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -199,7 +197,7 @@ func TestRPTIndex_SaveLoad(t *testing.T) {
 func TestRPTIndex_ConcurrentOperations(t *testing.T) {
 	dim := 6
 	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
+		defaultParallelThreshold, defaultProbeMargin)
 	numVectors := 1000
 	var wg sync.WaitGroup
 
@@ -231,7 +229,7 @@ func TestRPTIndex_ConcurrentOperations(t *testing.T) {
 func TestRPTIndex_ErrorOnWrongVectorDimension(t *testing.T) {
 	dim := 6
 	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin, core.Euclidean, "euclidean")
+		defaultParallelThreshold, defaultProbeMargin)
 
 	// Test Add with wrong vector dimension.
 	wrongVec := []float32{1, 2, 3}

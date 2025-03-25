@@ -5,7 +5,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/pqivf"
 )
 
@@ -15,10 +14,8 @@ func TestPQIVF_BasicOperations(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	distanceName := "euclidean"
 
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters,
-		core.Distances[distanceName], distanceName)
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// Test Add.
 	vec1 := []float32{1, 2, 3, 4, 5, 6}
@@ -52,8 +49,7 @@ func TestPQIVF_Search(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean,
-		"euclidean")
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// Insert several vectors.
 	vectors := map[int][]float32{
@@ -88,8 +84,7 @@ func TestPQIVF_BulkOperations(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean,
-		"euclidean")
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// BulkAdd a set of vectors.
 	vectors := map[int][]float32{
@@ -149,8 +144,7 @@ func TestPQIVF_SaveLoad(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean,
-		"euclidean")
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// Insert a couple of vectors.
 	vectors := map[int][]float32{
@@ -170,8 +164,7 @@ func TestPQIVF_SaveLoad(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	newIdx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean,
-		"euclidean")
+	newIdx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
 	if err := newIdx.Load(filePath); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -187,8 +180,7 @@ func TestPQIVF_ConcurrentOperations(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters, core.Euclidean,
-		"euclidean")
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
 	numVectors := 1000
 	var wg sync.WaitGroup
 

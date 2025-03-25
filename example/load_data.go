@@ -161,7 +161,7 @@ func LoadTrainingVectors(dir string) (map[int][]float32, error) {
 }
 
 // LoadTestDataset loads the test vectors and ground-truth data from the specified directory.
-// It returns the test vectors, true neighbor IDs, and true distances.
+// It returns the test vectors, true neighbor IDs, and true distances (ground-truth).
 func LoadTestDataset(dir string) ([][]float32, [][]int, [][]float64, error) {
 	testPath := filepath.Join(dir, "test.csv")
 	neighborsPath := filepath.Join(dir, "neighbors.csv")

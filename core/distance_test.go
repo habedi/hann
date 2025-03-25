@@ -59,6 +59,7 @@ func TestDistanceFunctions(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
+			// Arrange: set up test data (see above).
 			// Act: compute distances using the core package functions.
 			euclid := Euclidean(tt.a, tt.b)
 			sqEuclid := SquaredEuclidean(tt.a, tt.b)
