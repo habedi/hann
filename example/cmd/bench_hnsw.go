@@ -9,6 +9,8 @@ import (
 	"github.com/habedi/hann/hnsw"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 )
 
@@ -16,13 +18,22 @@ func main() {
 	// Set the logger to output to the console.
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
-	// Using HNSW index with FashionMNIST and Glove datasets
-	HNSWIndexFashionMNIST()
-	//BenchHNSWIndexGlove25()
-	HNSWIndexGlove200()
+	// Start the pprof HTTP server on port 6060.
+	// This will expose profiling endpoints at /debug/pprof/
+	go func() {
+		log.Info().Msg("Starting pprof server on :6060")
+		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			log.Error().Err(err).Msg("pprof server failed")
+		}
+	}()
+
+	// Benchmarking HNSW index with FashionMNIST and Glove datasets
+	BenchHNSWIndexFashionMNIST()
+	BenchHNSWIndexGlove25()
+	BenchHNSWIndexGlove200()
 }
 
-func HNSWIndexFashionMNIST() {
+func BenchHNSWIndexFashionMNIST() {
 	factory := func() core.Index {
 		dimension := 784
 		M := 16
@@ -32,10 +43,10 @@ func HNSWIndexFashionMNIST() {
 	}
 
 	example.RunDataset(factory, "fashion-mnist-784-euclidean",
-		"example/data/nearest-neighbors-datasets", 100, 5, 5)
+		"example/data/nearest-neighbors-datasets", 100, -1, 5)
 }
 
-func HNSWIndexGlove25() {
+func BenchHNSWIndexGlove25() {
 	factory := func() core.Index {
 		dimension := 25
 		M := 16
@@ -45,10 +56,10 @@ func HNSWIndexGlove25() {
 	}
 
 	example.RunDataset(factory, "glove-25-angular",
-		"example/data/nearest-neighbors-datasets", 100, 5, 5)
+		"example/data/nearest-neighbors-datasets", 100, -1, 5)
 }
 
-func HNSWIndexGlove200() {
+func BenchHNSWIndexGlove200() {
 	factory := func() core.Index {
 		dimension := 200
 		M := 16
@@ -58,5 +69,5 @@ func HNSWIndexGlove200() {
 	}
 
 	example.RunDataset(factory, "glove-200-angular",
-		"example/data/nearest-neighbors-datasets", 100, 5, 5)
+		"example/data/nearest-neighbors-datasets", 100, -1, 5)
 }

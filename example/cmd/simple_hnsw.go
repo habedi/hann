@@ -14,6 +14,9 @@ import (
 	"github.com/habedi/hann/hnsw"
 )
 
+// Note: results may vary between different runs even if HANN_SEED is set.
+// That's expected as the HNSW index uses none-deterministic operations (like parallel loops).
+
 func main() {
 
 	// Set the logger to output to the console.
@@ -89,7 +92,7 @@ func main() {
 	}
 	saveFile.Close()
 
-	// Load the index from disk.
+	// Create a new index and load the saved state using the io.Reader.
 	fmt.Println("Loading index from file:", filePath)
 	loadFile, err := os.Open(filePath)
 	if err != nil {

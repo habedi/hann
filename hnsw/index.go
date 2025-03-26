@@ -684,6 +684,11 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	candidates := h.searchLayer(query, current, 0, h.Ef, h.Distance)
 	if len(candidates) < k {
 		// Use fallback to gather more candidates if needed.
+
+		// Log that fallback is triggered.
+		log.Warn().Msgf("Fallback search triggered: insufficient candidates from"+
+			" searchLayer; only %d found", len(candidates))
+
 		candidateIDs := make(map[int]bool)
 		for _, c := range candidates {
 			candidateIDs[c.node.ID] = true

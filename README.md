@@ -101,7 +101,7 @@ make download-data-large
 ```
 
 Note that to run the examples using large datasets, possibly a machine with large amounts of memory is needed
-like 32 GB or more.
+(like 32 GB of RAM or more).
 
 Check the [data](example/data) directory for information about the datasets.
 

@@ -9,6 +9,7 @@ EXAMPLES_DIR := "example/cmd"
 HF_DATASET := "nearest-neighbors-datasets"
 HANN_SEED := 33
 HANN_LOG := 1
+HANN_BENCH_NTRD := 6
 
 # List of packages to test (excluding example/cmd)
 PACKAGES := $(shell $(GO) list ./... | grep -v $(EXAMPLES_DIR))
@@ -102,3 +103,10 @@ run-examples-large: format ## Run the examples (large datasets)
 	#@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/hnsw_large.go
 	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/pqivf_large.go
 	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/rpt_large.go
+
+.PHONY: run-benches
+run-benches: format ## Run the benchmarks
+	@echo "Running the benchmarks..."
+	@HANN_LOG=0 HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_hnsw.go
+	@HANN_LOG=0 HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_pqivf.go
+	@HANN_LOG=0 HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_rpt.go

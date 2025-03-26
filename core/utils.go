@@ -19,6 +19,6 @@ func GetSeed() int64 {
 	}
 
 	seed := time.Now().UnixNano()
-	log.Info().Msgf("Using current time as seed: %d", seed)
+	//log.Info().Msgf("Using current time as seed: %d", seed)
 	return seed
 }
