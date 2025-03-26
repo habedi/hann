@@ -127,7 +127,28 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 		})
 		// Choose the median as threshold.
 		mid := len(pairs) / 2
-		threshold := pairs[mid].dot
+
+		// Choose a random point x and compute the maximum distance to any other point.
+		x := points[ids[rnd.Intn(len(ids))]]
+		var maxDist float64
+		for _, id := range ids {
+			y := points[id]
+			var dist float64
+			for i := 0; i < dimension; i++ {
+				d := float64(x[i] - y[i])
+				dist += d * d
+			}
+			if dist > maxDist {
+				maxDist = dist
+			}
+		}
+		maxDist = math.Sqrt(maxDist)
+
+		// Compute jitter
+		jitter := (rnd.Float64()*2 - 1) * 6 * maxDist / math.Sqrt(float64(dimension))
+
+		// Median threshold with jitter
+		threshold := pairs[mid].dot + jitter
 
 		// Split ids into left and right groups.
 		var leftIDs, rightIDs []int

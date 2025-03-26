@@ -99,6 +99,6 @@ run-examples: format ## Run the examples
 .PHONY: run-examples-large
 run-examples-large: format ## Run the examples (large datasets)
 	@echo "Running the examples that use large datasets..."
-	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/hnsw_large.go
+	#@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/hnsw_large.go
 	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/pqivf_large.go
 	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/rpt_large.go
