@@ -1,16 +1,25 @@
-run:
-  timeout: 5m
-
+version: "2"
 linters:
-  enable:
-    - errcheck
-    - gosimple
-    - govet
-    - staticcheck
-    - unused
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go
+    paths:
+      - example/cmd
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

@@ -15,15 +15,16 @@ func init() {
 	debugMode := strings.TrimSpace(strings.ToLower(os.Getenv("HANN_LOG")))
 
 	// Set the global logging level based on the value of HANN_LOG.
-	if debugMode == "0" || debugMode == "off" || debugMode == "false" {
+	switch debugMode {
+	case "0", "off", "false":
 		// Disable logging altogether if HANN_LOG is set to "off", "false", or `0`.
 		zerolog.SetGlobalLevel(zerolog.Disabled)
-	} else if debugMode == "full" || debugMode == "all" {
+	case "full", "all":
 		// Set the logging level to DEBUG if HANN_LOG is set to "full" or "all".
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
 		// Set the logger output to the console.
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-	} else {
+	default:
 		// Set the logging level to INFO by default.
 		zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	}
