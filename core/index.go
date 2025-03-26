@@ -1,7 +1,9 @@
 package core
 
+import "io"
+
 // Index represents a generic interface for an approximate nearest neighbors search index.
-// All indexes in Hann must implement the methods defined in this interface.
+// All indexes in Hann must implement the functions defined in this interface.
 type Index interface {
 
 	// Add inserts a vector with a given id into the index.
@@ -47,14 +49,14 @@ type Index interface {
 	Stats() IndexStats
 
 	// Save persists the index state to the specified file.
-	// path: the file path where the index state will be saved.
+	// w: the IO writer that the index state will be saved to.
 	// Returns an error if the operation fails.
-	Save(path string) error
+	Save(w io.Writer) error
 
 	// Load initializes the index from a previously saved state.
-	// path: the file path from which the index state will be loaded.
+	// r: the IO reader that the index state will be loaded from.
 	// Returns an error if the operation fails.
-	Load(path string) error
+	Load(r io.Reader) error
 }
 
 // Neighbor holds a neighbor's id and its computed distance.

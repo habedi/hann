@@ -5,16 +5,14 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"os"
 
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/hnsw"
 )
-
-// Note: results may vary between different runs even if HANN_SEED is set.
-// That's expected as the HNSW index uses none-deterministic operations (like parallel loops).
 
 func main() {
 
@@ -82,16 +80,26 @@ func main() {
 	// Save the index to disk.
 	filePath := "hnsw_index.gob"
 	fmt.Println("Saving index to file:", filePath)
-	if err := index.Save(filePath); err != nil {
+	saveFile, err := os.Create(filePath)
+	if err != nil {
+		log.Fatal().Msgf("failed to create file: %v", err)
+	}
+	if err := index.Save(saveFile); err != nil {
 		log.Fatal().Msgf("Save failed: %v", err)
 	}
+	saveFile.Close()
 
-	// Create a new index instance and load the saved index into it.
+	// Load the index from disk.
 	fmt.Println("Loading index from file:", filePath)
+	loadFile, err := os.Open(filePath)
+	if err != nil {
+		log.Fatal().Msgf("failed to open file: %v", err)
+	}
 	newIndex := hnsw.NewHNSW(dim, m, ef, core.Distances[distanceName], distanceName)
-	if err := newIndex.Load(filePath); err != nil {
+	if err := newIndex.Load(loadFile); err != nil {
 		log.Fatal().Msgf("Load failed: %v", err)
 	}
+	loadFile.Close()
 	fmt.Printf("Index stats after Load: %+v\n", newIndex.Stats())
 
 	// Search in the loaded index.

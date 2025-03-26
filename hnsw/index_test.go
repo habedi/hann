@@ -218,16 +218,29 @@ func TestHNSWIndex_SaveLoad(t *testing.T) {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	// Save to a temporary file.
-	tempPath := "temp_index.gob"
-	if err := index.Save(tempPath); err != nil {
+	// Create a temporary file for saving.
+	tmpFile, err := os.CreateTemp("", "temp_index_*.gob")
+	if err != nil {
+		t.Fatalf("failed to create temporary file: %v", err)
+	}
+	tmpPath := tmpFile.Name()
+	// Save the index using the io.Writer.
+	if err := index.Save(tmpFile); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
-	defer os.Remove(tempPath)
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
 
-	// Create a new index and load the saved state.
+	// Open the file for reading.
+	readFile, err := os.Open(tmpPath)
+	if err != nil {
+		t.Fatalf("failed to open temporary file: %v", err)
+	}
+	defer readFile.Close()
+
+	// Create a new index and load the saved state using the io.Reader.
 	newIndex := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
-	if err := newIndex.Load(tempPath); err != nil {
+	if err := newIndex.Load(readFile); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
 

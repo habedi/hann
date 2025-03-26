@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"github.com/habedi/hann/core"
 	"github.com/rs/zerolog/log"
+	"io"
 	"math"
 	"math/rand"
-	"os"
 	"runtime"
 	"sort"
 	"sync"
@@ -789,37 +789,27 @@ func (h *HNSWIndex) Stats() core.IndexStats {
 	return stats
 }
 
-// Save writes the index to disk using gob encoding.
-func (h *HNSWIndex) Save(path string) error {
+// Save writes the index to the given io.Writer using gob encoding.
+func (h *HNSWIndex) Save(w io.Writer) error {
 	h.Mu.RLock()
 	defer h.Mu.RUnlock()
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	enc := gob.NewEncoder(f)
+	enc := gob.NewEncoder(w)
 	if err := enc.Encode(h); err != nil {
 		return err
 	}
-	log.Info().Msgf("Index saved to %s", path)
+	log.Info().Msg("Index saved")
 	return nil
 }
 
-// Load reads the index from disk using gob decoding.
-func (h *HNSWIndex) Load(path string) error {
+// Load reads the index from the given io.Reader using gob decoding.
+func (h *HNSWIndex) Load(r io.Reader) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	dec := gob.NewDecoder(f)
+	dec := gob.NewDecoder(r)
 	if err := dec.Decode(h); err != nil {
 		return err
 	}
-	log.Info().Msgf("Index loaded from %s", path)
+	log.Info().Msg("Index loaded")
 	return nil
 }
 
