@@ -9,12 +9,23 @@ import (
 	"github.com/habedi/hann/rpt"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 )
 
 func main() {
 	// Set the logger to output to the console.
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+
+	// Start the pprof HTTP server on port 6060.
+	// This will expose profiling endpoints at /debug/pprof/
+	go func() {
+		log.Info().Msg("Starting pprof server on :6060")
+		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			log.Error().Err(err).Msg("pprof server failed")
+		}
+	}()
 
 	// Benchmarking RPT index with FashionMNIST and SIFT datasets
 	BenchRPTIndexFashionMNIST()

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/habedi/hann/core"
 	"github.com/rs/zerolog/log"
+	"github.com/schollz/progressbar/v3"
 	"io"
 	"math"
 	"math/rand"
@@ -506,7 +507,7 @@ func (h *HNSWIndex) Update(id int, vector []float32) error {
 
 // BulkAdd inserts multiple vectors into the index at once.
 func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
-	// Normalize all vectors in batch if using cosine similarity.
+	// Normalize vectors if using cosine similarity.
 	if h.DistanceName == "cosine" {
 		var vecs [][]float32
 		for _, vector := range vectors {
@@ -545,6 +546,12 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 	bulkEf := h.Ef
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
+
+	// Initialize progress bar with a newline after finish.
+	bar := progressbar.NewOptions(len(nodesSlice),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
+
 	for _, newNode := range nodesSlice {
 		h.Nodes[newNode.ID] = newNode
 		if h.EntryPoint == nil {
@@ -557,6 +564,10 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 			}
 			h.insertNode(newNode, bulkEf)
 		}
+		err := bar.Add(1)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -565,14 +576,28 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 func (h *HNSWIndex) BulkDelete(ids []int) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
+
+	// Initialize progress bar with newline on completion.
+	bar := progressbar.NewOptions(len(ids),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
 	for _, id := range ids {
 		node, exists := h.Nodes[id]
 		if !exists {
+			err := bar.Add(1)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		h.removeNodeLinks(node)
 		delete(h.Nodes, id)
+		err := bar.Add(1)
+		if err != nil {
+			return err
+		}
 	}
+
 	// Clean up links in remaining nodes.
 	for _, n := range h.Nodes {
 		for L, neighbors := range n.Links {
@@ -612,9 +637,18 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
+
+	// Progress bar for processing updates with newline on finish.
+	bar := progressbar.NewOptions(len(updates),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
 	for id, vector := range updates {
 		node, exists := h.Nodes[id]
 		if !exists {
+			err := bar.Add(1)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		if len(vector) != h.Dimension {
@@ -625,7 +659,12 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 		node.Vector = vector
 		node.Links = make(map[int][]*Node)
 		node.ReverseLinks = make(map[int][]*Node)
+		err := bar.Add(1)
+		if err != nil {
+			return err
+		}
 	}
+
 	// Reinsert all nodes to rebuild links.
 	allNodes := make([]*Node, 0, len(h.Nodes))
 	for _, node := range h.Nodes {
@@ -636,12 +675,21 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 	})
 	h.EntryPoint = nil
 	h.MaxLevel = -1
+
+	// Progress bar for reinsertion with newline on finish.
+	bar = progressbar.NewOptions(len(allNodes),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
 	for _, node := range allNodes {
 		if h.EntryPoint == nil || node.Level > h.MaxLevel {
 			h.EntryPoint = node
 			h.MaxLevel = node.Level
 		}
 		h.insertNode(node, h.Ef)
+		err := bar.Add(1)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

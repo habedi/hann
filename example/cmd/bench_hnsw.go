@@ -36,8 +36,8 @@ func main() {
 func BenchHNSWIndexFashionMNIST() {
 	factory := func() core.Index {
 		dimension := 784
-		M := 16
-		ef := 64
+		M := 32
+		ef := 300
 		distanceName := "euclidean"
 		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
 	}
@@ -50,7 +50,7 @@ func BenchHNSWIndexGlove25() {
 	factory := func() core.Index {
 		dimension := 25
 		M := 16
-		ef := 64
+		ef := 100
 		distanceName := "cosine"
 		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
 	}
@@ -63,7 +63,7 @@ func BenchHNSWIndexGlove200() {
 	factory := func() core.Index {
 		dimension := 200
 		M := 16
-		ef := 64
+		ef := 100
 		distanceName := "cosine"
 		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
 	}

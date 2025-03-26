@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"github.com/habedi/hann/core"
+	"github.com/schollz/progressbar/v3"
 	"io"
 	"math"
 	"math/rand"
@@ -167,6 +168,12 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 		keys = append(keys, id)
 	}
 	sort.Ints(keys)
+
+	// Create a progress bar for the number of vectors being added.
+	bar := progressbar.NewOptions(len(keys),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
+
 	updatedClusters := make(map[int]bool)
 	for _, id := range keys {
 		vector := vectors[id]
@@ -201,6 +208,12 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 		entry := pqEntry{ID: id, Vector: vector, Codes: codes, Cluster: cluster}
 		pq.invertedLists[cluster] = append(pq.invertedLists[cluster], entry)
 		updatedClusters[cluster] = true
+
+		// Update the progress bar.
+		err := bar.Add(1)
+		if err != nil {
+			return err
+		}
 	}
 	// Recalculate centroids for clusters that got updated.
 	for cluster := range updatedClusters {
@@ -249,14 +262,26 @@ func (pq *PQIVFIndex) BulkDelete(ids []int) error {
 	defer pq.mu.Unlock()
 
 	sort.Ints(ids)
+	// Create a progress bar for deletions.
+	bar := progressbar.NewOptions(len(ids),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
 	updatedClusters := make(map[int]bool)
 	for _, id := range ids {
 		cluster, exists := pq.idToCluster[id]
 		if !exists {
+			err := bar.Add(1)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		entries, ok := pq.invertedLists[cluster]
 		if !ok {
+			err := bar.Add(1)
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		var newEntries []pqEntry
@@ -271,6 +296,10 @@ func (pq *PQIVFIndex) BulkDelete(ids []int) error {
 		delete(pq.idToCluster, id)
 		if len(newEntries) > 0 {
 			updatedClusters[cluster] = true
+		}
+		err := bar.Add(1)
+		if err != nil {
+			return err
 		}
 	}
 	// Recalculate centroids for updated clusters.
@@ -295,9 +324,17 @@ func (pq *PQIVFIndex) BulkUpdate(updates map[int][]float32) error {
 		keys = append(keys, id)
 	}
 	sort.Ints(keys)
+	// Create a progress bar for updates.
+	bar := progressbar.NewOptions(len(keys),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
 	for _, id := range keys {
 		vector := updates[id]
 		if err := pq.Update(id, vector); err != nil {
+			return err
+		}
+		err := bar.Add(1)
+		if err != nil {
 			return err
 		}
 	}

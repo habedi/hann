@@ -37,7 +37,7 @@ It can be used to add fast in-memory similarity search capabilities to your Go a
 - Support for bulk insertion, deletion, and update of vectors
 - Support for saving indexes to disk and loading them back
 
-#### Indexes
+### Indexes
 
 | Index Name                                            | Space Complexity | Build Complexity | Search Complexity                             | 
 |-------------------------------------------------------|------------------|------------------|-----------------------------------------------|
@@ -54,11 +54,11 @@ It can be used to add fast in-memory similarity search capabilities to your Go a
 #### Supported Distances
 
 The HNSW index supports the use of Euclidean, squared Euclidean, Manhattan, and cosine distances.
-If cosine distance is used, the vectors are normalized on read (before they are used in the index or for search).
+If cosine distance is used, the vectors are normalized (L2-normalization) both at insertion and at query time.
 Note that squared Euclidean distance is slightly faster to compute than Euclidean distance
 and gives the same order of closest vectors as Euclidean distance.
-It can be used in place of Euclidean distance if only the order of closest vectors to
-query vector is needed, not the actual distances.
+It can be used in place of Euclidean distance if only the order of closest vectors to the query vector is needed, not
+the actual distances.
 
 The PQIVF and RPT indexes support Euclidean distance only.
 
@@ -79,13 +79,16 @@ Hann requires Go 1.21 or later, a C (or C++) compiler, and a CPU that supports A
 | [simple_hnsw.go](example/cmd/simple_hnsw.go) | Create and use an HNSW index with inline data                             |
 | [hnsw.go](example/cmd/hnsw.go)               | Create and use an HNSW index                                              |
 | [hnsw_large.go](example/cmd/hnsw_large.go)   | Create and use an HNSW index (using large datasets)                       |
+| [bench_hnsw.go](example/cmd/bench_hnsw.go)   | Local benchmarks for the HNSW index                                       |
 | [pqivf.go](example/cmd/pqivf.go)             | Create and use a PQIVF index                                              |
 | [pqivf_large.go](example/cmd/pqivf_large.go) | Create and use a PQIVF index (using large datasets)                       |
+| [bench_pqivf.go](example/cmd/bench_pqivf.go) | Local benchmarks for the PQIVF index                                      |
 | [rpt.go](example/cmd/rpt.go)                 | Create and use an RPT index                                               |
 | [rpt_large.go](example/cmd/rpt_large.go)     | Create and use an RPT index (using large datasets)                        |
+| [bench_rpt.go](example/cmd/bench_rpt.go)     | Local benchmarks for the RPT index                                        |
 | [load_data.go](example/load_data.go)         | Helper functions for loading example datasets                             |
 | [utils.go](example/utils.go)                 | Extra helper functions for the examples                                   |
-| [run_datasets.go](example/run_dataset.go)    | The code to create different indexes and try them with different datasets |
+| [run_datasets.go](example/run_datasets.go)   | The code to create different indexes and try them with different datasets |
 
 #### Datasets
 
@@ -118,7 +121,7 @@ by [Malkov and Yashunin (2016)](https://arxiv.org/abs/1603.09320).
 HNSW organizes data into multiple layers of a proximity graph, which allows fast approximate nearest neighbor searches
 by greedily traversing the graph from top to bottom.
 
-The index has the following parameters:
+The index has the following configurable parameters:
 
 - **M**: Controls the maximum number of neighbor connections per node. Higher values improve accuracy but increase
   memory and indexing time (typical range: 5–48).
@@ -134,7 +137,7 @@ quantization](https://ieeexplore.ieee.org/document/5432202).
 This allows fast approximate nearest neighbor searches by limiting queries to relevant clusters and
 efficiently comparing compressed vectors, which reduces search time and storage requirements.
 
-The index has the following parameters:
+The index has the following configurable parameters:
 
 - **coarseK**: Controls the number of coarse clusters for initial quantization. Higher values improve search performance
   but increase indexing time (typical range: 50–4096).
@@ -151,7 +154,7 @@ by [Dasgupta and Freund (2008)](https://dl.acm.org/doi/10.1145/1374376.1374452).
 RPT recursively partitions data using randomly generated hyperplanes to build a tree structure, which allows efficient
 approximate nearest neighbor searches through a tree traversal process.
 
-The index has the following parameters:
+The index has the following configurable parameters:
 
 - **leafCapacity**: Controls the maximum number of vectors stored in each leaf node. Lower values increase tree depth,
   improving search speed but slightly increasing indexing time (typical range: 5–50).
@@ -178,6 +181,20 @@ For more consistent indexing and search results across different runs, set the `
 integer.
 This will initialize the random number generator, but some variations are still possible (for example, due to
 multithreading).
+
+#### Benchmarks
+
+Local benchmarks can be run using the following command:
+
+```shell
+make run-benches
+```
+
+To run the benchmarks, the example datasets must be downloaded first using `make download-data`
+or manually (see [data](example/data)).
+
+Set the `HANN_BENCH_NTRD` environment variable to control how many threads are used for queries during benchmarks
+(default is 6).
 
 ---
 

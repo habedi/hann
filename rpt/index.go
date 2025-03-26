@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/habedi/hann/core"
+	"github.com/schollz/progressbar/v3"
 	"io"
 	"math"
 	"math/rand"
@@ -397,6 +398,11 @@ func (r *RPTIndex) Add(id int, vector []float32) error {
 func (r *RPTIndex) BulkAdd(vectors map[int][]float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Create a progress bar with a newline on completion.
+	bar := progressbar.NewOptions(len(vectors),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
 	for id, vector := range vectors {
 		if len(vector) != r.dimension {
 			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
@@ -406,6 +412,10 @@ func (r *RPTIndex) BulkAdd(vectors map[int][]float32) error {
 			return fmt.Errorf("id %d already exists", id)
 		}
 		r.points[id] = vector
+		err := bar.Add(1)
+		if err != nil {
+			return err
+		}
 	}
 	r.dirty = true
 	return nil
@@ -427,8 +437,17 @@ func (r *RPTIndex) Delete(id int) error {
 func (r *RPTIndex) BulkDelete(ids []int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Create a progress bar with a newline on completion.
+	bar := progressbar.NewOptions(len(ids),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
 	for _, id := range ids {
 		delete(r.points, id)
+		err := bar.Add(1)
+		if err != nil {
+			return err
+		}
 	}
 	r.dirty = true
 	return nil
@@ -454,6 +473,11 @@ func (r *RPTIndex) Update(id int, vector []float32) error {
 func (r *RPTIndex) BulkUpdate(updates map[int][]float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Create a progress bar with a newline on completion.
+	bar := progressbar.NewOptions(len(updates),
+		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
+	)
 	for id, vector := range updates {
 		if len(vector) != r.dimension {
 			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
@@ -463,6 +487,10 @@ func (r *RPTIndex) BulkUpdate(updates map[int][]float32) error {
 			return fmt.Errorf("id %d not found", id)
 		}
 		r.points[id] = vector
+		err := bar.Add(1)
+		if err != nil {
+			return err
+		}
 	}
 	r.dirty = true
 	return nil

@@ -25,7 +25,7 @@ func HNSWIndexGIST(distanceName string) {
 	factory := func() core.Index {
 		dimension := 960
 		M := 16
-		ef := 64
+		ef := 100
 		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
 	}
 
@@ -37,7 +37,7 @@ func HNSWIndexDEEP1B(distanceName string) {
 	factory := func() core.Index {
 		dimension := 96
 		M := 16
-		ef := 64
+		ef := 100
 		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
 	}
 

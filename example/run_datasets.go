@@ -164,7 +164,7 @@ func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxRe
 		}
 	}
 
-	fmt.Printf("\nAverage Recall@%d over %d queries: %.2f\n", k, numQueries, avgRecall)
+	fmt.Printf("Average Recall@%d over %d queries: %.2f\n", k, numQueries, avgRecall)
 	fmt.Printf("Average query response time: %v\n", avgResponseTime)
 	fmt.Printf("Overall runtime: %v\n", time.Since(overallStart))
 }

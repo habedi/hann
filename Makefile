@@ -100,13 +100,13 @@ run-examples: format ## Run the examples
 .PHONY: run-examples-large
 run-examples-large: format ## Run the examples (large datasets)
 	@echo "Running the examples that use large datasets..."
-	#@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/hnsw_large.go
+	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/hnsw_large.go
 	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/pqivf_large.go
 	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/rpt_large.go
 
 .PHONY: run-benches
 run-benches: format ## Run the benchmarks
 	@echo "Running the benchmarks..."
-	@HANN_LOG=0 HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_hnsw.go
-	@HANN_LOG=0 HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_pqivf.go
-	@HANN_LOG=0 HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_rpt.go
+	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_hnsw.go
+	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_pqivf.go
+	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_rpt.go
