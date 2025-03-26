@@ -49,12 +49,12 @@ type Index interface {
 	Stats() IndexStats
 
 	// Save persists the index state to the specified file.
-	// w: the IO writer that the index state will be saved to.
+	// w: the writer to which the index state will be saved.
 	// Returns an error if the operation fails.
 	Save(w io.Writer) error
 
 	// Load initializes the index from a previously saved state.
-	// r: the IO reader that the index state will be loaded from.
+	// r: the reader from which the index state will be loaded.
 	// Returns an error if the operation fails.
 	Load(r io.Reader) error
 }

@@ -1,7 +1,7 @@
 package pqivf_test
 
 import (
-	"os"
+	"bytes"
 	"sync"
 	"testing"
 
@@ -157,15 +157,16 @@ func TestPQIVF_SaveLoad(t *testing.T) {
 		}
 	}
 
-	filePath := "test_pqivf.gob"
-	defer os.Remove(filePath)
-
-	if err := idx.Save(filePath); err != nil {
+	// Use a bytes.Buffer for in-memory serialization.
+	var buf bytes.Buffer
+	if err := idx.Save(&buf); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
 	newIdx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
-	if err := newIdx.Load(filePath); err != nil {
+	// Create a reader from the bytes of the buffer.
+	r := bytes.NewReader(buf.Bytes())
+	if err := newIdx.Load(r); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
 	stats := newIdx.Stats()

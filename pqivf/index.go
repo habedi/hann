@@ -5,9 +5,9 @@ import (
 	"encoding/gob"
 	"fmt"
 	"github.com/habedi/hann/core"
+	"io"
 	"math"
 	"math/rand"
-	"os"
 	"sort"
 	"sync"
 )
@@ -656,29 +656,19 @@ func (pq *PQIVFIndex) GobDecode(data []byte) error {
 	return nil
 }
 
-// Save writes the index to disk using gob encoding.
-func (pq *PQIVFIndex) Save(path string) error {
+// Save writes the index to the given writer using gob encoding.
+func (pq *PQIVFIndex) Save(w io.Writer) error {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	enc := gob.NewEncoder(f)
+	enc := gob.NewEncoder(w)
 	return enc.Encode(pq)
 }
 
-// Load reads the index from disk using gob decoding.
-func (pq *PQIVFIndex) Load(path string) error {
+// Load reads the index from the given reader using gob decoding.
+func (pq *PQIVFIndex) Load(r io.Reader) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	dec := gob.NewDecoder(f)
+	dec := gob.NewDecoder(r)
 	return dec.Decode(pq)
 }
 

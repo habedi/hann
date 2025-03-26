@@ -789,7 +789,7 @@ func (h *HNSWIndex) Stats() core.IndexStats {
 	return stats
 }
 
-// Save writes the index to the given io.Writer using gob encoding.
+// Save writes the index to the given writer using gob encoding.
 func (h *HNSWIndex) Save(w io.Writer) error {
 	h.Mu.RLock()
 	defer h.Mu.RUnlock()
@@ -801,7 +801,7 @@ func (h *HNSWIndex) Save(w io.Writer) error {
 	return nil
 }
 
-// Load reads the index from the given io.Reader using gob decoding.
+// Load reads the index from the given reader using gob decoding.
 func (h *HNSWIndex) Load(r io.Reader) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()

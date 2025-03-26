@@ -1,7 +1,7 @@
 package rpt_test
 
 import (
-	"os"
+	"bytes"
 	"sync"
 	"testing"
 
@@ -176,18 +176,20 @@ func TestRPTIndex_SaveLoad(t *testing.T) {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	filePath := "test_rpt.gob"
-	defer os.Remove(filePath)
-
-	if err := idx.Save(filePath); err != nil {
+	// Save to an in-memory buffer.
+	var buf bytes.Buffer
+	if err := idx.Save(&buf); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
+	// Create a new index and load from the buffer.
 	newIdx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
 		defaultParallelThreshold, defaultProbeMargin)
-	if err := newIdx.Load(filePath); err != nil {
+	r := bytes.NewReader(buf.Bytes())
+	if err := newIdx.Load(r); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
+
 	stats := newIdx.Stats()
 	if stats.Count != len(vectors) {
 		t.Errorf("expected count %d after load, got %d", len(vectors), stats.Count)

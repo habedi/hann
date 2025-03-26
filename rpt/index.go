@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/habedi/hann/core"
+	"io"
 	"math"
 	"math/rand"
-	"os"
 	"runtime"
 	"sort"
 	"sync"
@@ -519,29 +519,19 @@ func (r *RPTIndex) GobDecode(data []byte) error {
 	return nil
 }
 
-// Save writes the serialized index to disk.
-func (r *RPTIndex) Save(path string) error {
+// Save writes the index to the given writer using gob encoding.
+func (r *RPTIndex) Save(w io.Writer) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	enc := gob.NewEncoder(f)
+	enc := gob.NewEncoder(w)
 	return enc.Encode(r)
 }
 
-// Load reads the serialized index from disk.
-func (r *RPTIndex) Load(path string) error {
+// Load reads the index from the given reader using gob encoding.
+func (r *RPTIndex) Load(rdr io.Reader) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	dec := gob.NewDecoder(f)
+	dec := gob.NewDecoder(rdr)
 	return dec.Decode(r)
 }
 
