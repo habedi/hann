@@ -72,6 +72,7 @@ install-deps: ## Install development dependencies (for Debian-based systems)
 	@sudo snap install go --classic
 	@sudo snap install golangci-lint --classic
 	@sudo apt-get install -y python3-poetry
+	@$(GO) install github.com/google/pprof@latest
 	@$(GO) mod download
 
 .PHONY: lint
