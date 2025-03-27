@@ -34,7 +34,7 @@ It can be used to add fast in-memory similarity search capabilities to your Go a
 - Unified interface for different indexes (see [core/index.go](core/index.go))
 - Support for indexing and searching vectors of arbitrary dimension
 - Fast distance computation using SIMD (AVX) instructions (see [core/simd_distance.c](core/simd_distance.c))
-- Support for bulk insertion, deletion, and update of vectors
+- Support for bulk insertion, deletion, and updates
 - Support for saving indexes to disk and loading them back
 
 ### Indexes
