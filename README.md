@@ -23,7 +23,7 @@ A fast approximate nearest neighbor search library for Go
 
 Hann is a high-performance approximate nearest neighbor search (ANN) library for Go.
 It provides a collection of index data structures for efficient similarity search in high-dimensional spaces.
-Currently, supported indexes include Hierarchical Navigable Small World (HNSW),
+Supported indexes include Hierarchical Navigable Small World (HNSW),
 Product Quantization Inverted File (PQIVF), and Random Projection Tree (RPT).
 
 Hann can be seen as a core component of a vector database (like Milvus, Pinecone, Weaviate, Qdrant, etc.).
@@ -126,7 +126,7 @@ The index has the following configurable parameters:
 - **M**: Controls the maximum number of neighbor connections per node. Higher values improve accuracy but increase
   memory and indexing time (typical range: 5–48).
 - **Ef**: Defines search breadth during insertion and searching. Higher values improve accuracy but
-  increase computational cost (typical range: 10–200).
+  increase computational cost for indexing and searching (typical range: 10–200).
 
 #### PQIVF Index
 
