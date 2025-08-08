@@ -111,3 +111,19 @@ run-benches: format ## Run the benchmarks
 	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_hnsw.go
 	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_pqivf.go
 	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_rpt.go
+
+.PHONY: setup-hooks
+setup-hooks: ## Install Git hooks (pre-commit and pre-push)
+	@echo "Setting up Git hooks..."
+	@if ! command -v pre-commit &> /dev/null; then \
+	   echo "pre-commit not found. Please install it using 'pip install pre-commit'"; \
+	   exit 1; \
+	fi
+	@pre-commit install --hook-type pre-commit
+	@pre-commit install --hook-type pre-push
+	@pre-commit install-hooks
+
+.PHONY: test-hooks
+test-hooks: ## Test Git hooks on all files
+	@echo "Testing Git hooks..."
+	@pre-commit run --all-files --show-diff-on-failure

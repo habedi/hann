@@ -1,0 +1,44 @@
+default_stages: [ pre-push ]
+fail_fast: false
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [ --markdown-linebreak-ext=md ]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-docstring-first
+      - id: check-added-large-files
+        args: [ --maxkb=500 ]
+      - id: pretty-format-json
+        args: [ --autofix, --no-sort-keys ]
+
+  - repo: local
+    hooks:
+      - id: format
+        name: Format the code
+        entry: make format
+        language: system
+        pass_filenames: false
+        stages: [ pre-commit ]
+
+      - id: lint
+        name: Run the linter checks
+        entry: make lint
+        language: system
+        pass_filenames: false
+        stages: [ pre-commit ]
+
+      - id: test
+        name: Run the tests
+        entry: make test
+        language: system
+        pass_filenames: false
+        stages: [ pre-push ]

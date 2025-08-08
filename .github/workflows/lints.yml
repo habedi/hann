@@ -1,4 +1,4 @@
-name: Run Linters
+name: Run Linter Checks
 
 on:
   workflow_dispatch:

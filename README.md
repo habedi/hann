@@ -39,11 +39,11 @@ It can be used to add fast in-memory similarity search capabilities to your Go a
 
 ### Indexes
 
-| Index Name                                            | Space Complexity | Build Complexity | Search Complexity                             | 
+| Index Name                                            | Space Complexity | Build Complexity | Search Complexity                             |
 |-------------------------------------------------------|------------------|------------------|-----------------------------------------------|
-| [HNSW](https://arxiv.org/abs/1603.09320)              | $O(nd + nM)$     | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case | 
-| [PQIVF](https://ieeexplore.ieee.org/document/5432202) | $O(nk + kd)$     | $O(nki)$         | $O(\frac{n}{k})$                              | 
-| [RPT](https://dl.acm.org/doi/10.1145/1374376.1374452) | $O(nd)$          | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case | 
+| [HNSW](https://arxiv.org/abs/1603.09320)              | $O(nd + nM)$     | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case |
+| [PQIVF](https://ieeexplore.ieee.org/document/5432202) | $O(nk + kd)$     | $O(nki)$         | $O(\frac{n}{k})$                              |
+| [RPT](https://dl.acm.org/doi/10.1145/1374376.1374452) | $O(nd)$          | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case |
 
 - $n$: number of vectors
 - $d$: number of dimensions (vector length)
