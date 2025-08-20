@@ -7,17 +7,19 @@
 extern "C" {
 #endif
 
-// Computes the Euclidean distance between two float arrays using AVX.
+// Function pointers for distance functions
+extern float (*simd_euclidean_ptr)(const float*, const float*, size_t);
+extern float (*simd_squared_euclidean_ptr)(const float*, const float*, size_t);
+extern float (*simd_manhattan_ptr)(const float*, const float*, size_t);
+extern float (*simd_cosine_distance_ptr)(const float*, const float*, size_t);
+
+// Public functions that call the function pointers
 float simd_euclidean(const float* a, const float* b, size_t n);
-
-// Computes the squared Euclidean distance (without the square root) between two float arrays using AVX.
 float simd_squared_euclidean(const float* a, const float* b, size_t n);
-
-// Computes the Manhattan (L1) distance between two float arrays using AVX.
 float simd_manhattan(const float* a, const float* b, size_t n);
-
-// Computes the cosine distance between two float arrays using AVX.
 float simd_cosine_distance(const float* a, const float* b, size_t n);
+
+void init_distance_functions(int support_level);
 
 #ifdef __cplusplus
 }

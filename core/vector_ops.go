@@ -13,7 +13,7 @@ func NormalizeVector(vec []float32) {
 	if len(vec) == 0 {
 		return
 	}
-	C.avx_normalize((*C.float)(unsafe.Pointer(&vec[0])), C.size_t(len(vec)))
+	C.simd_normalize((*C.float)(unsafe.Pointer(&vec[0])), C.size_t(len(vec)))
 }
 
 // NormalizeBatch normalizes multiple vectors in parallel using goroutines.
@@ -27,7 +27,7 @@ func NormalizeBatch(vecs [][]float32) {
 	for i := range vecs {
 		go func(i int) {
 			if len(vecs[i]) > 0 {
-				C.avx_normalize((*C.float)(unsafe.Pointer(&vecs[i][0])), C.size_t(len(vecs[i])))
+				C.simd_normalize((*C.float)(unsafe.Pointer(&vecs[i][0])), C.size_t(len(vecs[i])))
 			}
 			done <- struct{}{}
 		}(i)
