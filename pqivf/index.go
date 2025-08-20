@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
-	"github.com/habedi/hann/core"
-	"github.com/schollz/progressbar/v3"
 	"io"
 	"math"
 	"math/rand"
 	"sort"
 	"sync"
+
+	"github.com/habedi/hann/core"
+	"github.com/schollz/progressbar/v3"
 )
 
 // seededRand is a global random number generator for random operations (e.g. during k-means).

@@ -1,10 +1,11 @@
 package core
 
 import (
-	"github.com/rs/zerolog/log"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // GetSeed receives a seed value for random number generation from the HANN_SEED environment variable.

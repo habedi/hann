@@ -4,12 +4,13 @@
 package main
 
 import (
+	"os"
+
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/example"
 	"github.com/habedi/hann/pqivf"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"os"
 )
 
 func main() {

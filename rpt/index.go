@@ -5,14 +5,15 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"github.com/habedi/hann/core"
-	"github.com/schollz/progressbar/v3"
 	"io"
 	"math"
 	"math/rand"
 	"runtime"
 	"sort"
 	"sync"
+
+	"github.com/habedi/hann/core"
+	"github.com/schollz/progressbar/v3"
 )
 
 // NewRPTIndex creates a new RPT (Random Projection Tree) index.

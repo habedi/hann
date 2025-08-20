@@ -6,15 +6,16 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"github.com/habedi/hann/core"
-	"github.com/rs/zerolog/log"
-	"github.com/schollz/progressbar/v3"
 	"io"
 	"math"
 	"math/rand"
 	"runtime"
 	"sort"
 	"sync"
+
+	"github.com/habedi/hann/core"
+	"github.com/rs/zerolog/log"
+	"github.com/schollz/progressbar/v3"
 )
 
 // seededRand is a global random number generator used for level generation.
