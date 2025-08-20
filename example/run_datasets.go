@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/habedi/hann/core"
+	"github.com/habedi/hann/pqivf"
 	"github.com/rs/zerolog/log"
 	"github.com/schollz/progressbar/v3"
 )
@@ -49,6 +50,14 @@ func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxRe
 	log.Info().Msgf("Loaded %d training vectors", len(trainingVectors))
 	if err := index.BulkAdd(trainingVectors); err != nil {
 		log.Fatal().Err(err).Msg("BulkAdd failed")
+	}
+
+	// If the index is a PQIVF index, it needs to be trained.
+	if pqIndex, ok := index.(*pqivf.PQIVFIndex); ok {
+		log.Info().Msg("Training PQIVF index...")
+		if err := pqIndex.Train(); err != nil {
+			log.Fatal().Err(err).Msg("PQIVF training failed")
+		}
 	}
 
 	// Load test dataset.

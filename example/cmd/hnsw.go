@@ -19,7 +19,7 @@ func main() {
 
 	// Using HNSW index with FashionMNIST and Glove datasets
 	HNSWIndexFashionMNIST()
-	//BenchHNSWIndexGlove25()
+	HNSWIndexGlove25()
 	HNSWIndexGlove200()
 }
 

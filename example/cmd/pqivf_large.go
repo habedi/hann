@@ -27,7 +27,7 @@ func PQIVFIndexGIST() {
 		coarseK := 16
 		numSubquantizers := 8
 		pqK := 256
-		kMeansIters := 10
+		kMeansIters := 25
 		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters)
 	}
 
