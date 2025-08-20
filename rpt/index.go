@@ -3,7 +3,6 @@ package rpt
 import (
 	"bytes"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -336,6 +335,10 @@ func (r *RPTIndex) computeDistances(query []float32, ids []int) ([]core.Neighbor
 // It rebuilds the tree if needed and uses multi-probe search to get candidate ids.
 func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	r.mu.RLock()
+	if k <= 0 {
+		r.mu.RUnlock()
+		return nil, fmt.Errorf("k must be positive")
+	}
 	if len(query) != r.dimension {
 		r.mu.RUnlock()
 		return nil, fmt.Errorf("query dimension %d does not match index dimension %d",
@@ -343,7 +346,7 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	}
 	if len(r.points) == 0 {
 		r.mu.RUnlock()
-		return nil, errors.New("index is empty")
+		return nil, nil // Return empty slice for empty index
 	}
 	// Copy the query to avoid modifying the original.
 	queryCopy := make([]float32, len(query))

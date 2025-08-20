@@ -136,6 +136,9 @@ func (pq *PQIVFIndex) Add(id int, vector []float32) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
+	if pq.dimension == 0 {
+		return fmt.Errorf("cannot add to a zero-dimension index")
+	}
 	if len(vector) != pq.dimension {
 		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), pq.dimension)
 	}
@@ -584,6 +587,10 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
 
+	if k <= 0 {
+		return nil, fmt.Errorf("k must be positive")
+	}
+
 	if !pq.trained {
 		return nil, fmt.Errorf("PQIVF index is not trained. Call Train() after adding data before searching")
 	}
@@ -615,16 +622,11 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 		cluster := centCandidates[i].cluster
 		entries = append(entries, pq.invertedLists[cluster]...)
 	}
-	// If not enough entries, add more from further clusters.
-	if len(entries) < k {
-		for i := numCandidates; i < len(centCandidates) && len(entries) < k; i++ {
-			cluster := centCandidates[i].cluster
-			entries = append(entries, pq.invertedLists[cluster]...)
-		}
-	}
-	// If still not enough, take all available entries.
+
+	// If the number of candidates is less than k, and fallback is allowed,
+	// perform a brute-force scan over all entries.
 	if len(entries) < k && pq.AllowBruteForceFallback {
-		log.Warn().Msgf("Search for k=%d yielded only %d candidates. Falling back to brute-force scan.", k, len(entries))
+		log.Warn().Msgf("Search for k=%d yielded only %d candidates from probed clusters. Falling back to brute-force scan.", k, len(entries))
 		var allEntries []pqEntry
 		for _, list := range pq.invertedLists {
 			allEntries = append(allEntries, list...)

@@ -69,17 +69,17 @@ install-snap: ## Install Snap (for Debian-based systems)
 .PHONY: install-deps
 install-deps: ## Install development dependencies (for Debian-based systems)
 	$(ECHO) "Installing dependencies..."
-	@ifeq ($(CI),true)
-		@echo "Skipping Go installation in CI"
-	else
-		@echo "Installing Go and golangci-lint using Snap..."
-		@$(MAKE) install-snap
-		@sudo snap install go --classic
-		@sudo snap install golangci-lint --classic
-	endif
-	@sudo apt-get install -y python3-poetry
-	@$(GO) install github.com/google/pprof@latest
-	@$(GO) mod download
+ifeq ($(CI),true)
+	echo "Skipping Go installation in CI"
+else
+	echo "Installing Go and golangci-lint using Snap..."
+	$(MAKE) install-snap
+	sudo snap install go --classic
+	sudo snap install golangci-lint --classic
+endif
+	sudo apt-get install -y python3-poetry
+	$(GO) install github.com/google/pprof@latest
+	$(GO) mod download
 
 .PHONY: lint
 lint: format ## Run the linter checks
