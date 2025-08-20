@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/habedi/hann/core"
+	"github.com/rs/zerolog/log"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -28,19 +29,20 @@ type pqEntry struct {
 
 // PQIVFIndex is the main structure for the PQIVF index.
 type PQIVFIndex struct {
-	mu                   sync.RWMutex      // mutex for concurrent access
-	dimension            int               // dimension of the vectors
-	coarseK              int               // number of coarse clusters
-	coarseCentroids      [][]float32       // centroids for coarse quantization
-	clusterCounts        map[int]int       // count of vectors in each cluster
-	invertedLists        map[int][]pqEntry // inverted index mapping clusters to entries
-	numSubquantizers     int               // number of subquantizers (splits per vector)
-	codebooks            [][][]float32     // codebooks for each subquantizer
-	pqK                  int               // number of centroids per subquantizer (PQ codebook size)
-	kMeansIters          int               // number of iterations for training the subquantizers
-	idToCluster          map[int]int       // mapping from vector id to its cluster assignment
-	Distance             core.DistanceFunc // function to compute distance between vectors
-	numCandidateClusters int               // number of candidate clusters to consider during search
+	mu                      sync.RWMutex      // mutex for concurrent access
+	dimension               int               // dimension of the vectors
+	coarseK                 int               // number of coarse clusters
+	coarseCentroids         [][]float32       // centroids for coarse quantization
+	clusterCounts           map[int]int       // count of vectors in each cluster
+	invertedLists           map[int][]pqEntry // inverted index mapping clusters to entries
+	numSubquantizers        int               // number of subquantizers (splits per vector)
+	codebooks               [][][]float32     // codebooks for each subquantizer
+	pqK                     int               // number of centroids per subquantizer (PQ codebook size)
+	kMeansIters             int               // number of iterations for training the subquantizers
+	idToCluster             map[int]int       // mapping from vector id to its cluster assignment
+	Distance                core.DistanceFunc // function to compute distance between vectors
+	numCandidateClusters    int               // number of candidate clusters to consider during search
+	AllowBruteForceFallback bool              // whether to allow falling back to a full brute-force scan
 }
 
 // recalcCentroid recalculates the centroid for a given cluster based on its current entries.
@@ -67,18 +69,19 @@ func NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters int) *
 		panic(fmt.Sprintf("dimension (%d) must be divisible by numSubquantizers (%d)", dimension, numSubquantizers))
 	}
 	return &PQIVFIndex{
-		dimension:            dimension,
-		coarseK:              coarseK,
-		coarseCentroids:      make([][]float32, 0),
-		clusterCounts:        make(map[int]int),
-		invertedLists:        make(map[int][]pqEntry),
-		numSubquantizers:     numSubquantizers,
-		codebooks:            nil,
-		pqK:                  pqK,
-		kMeansIters:          kMeansIters,
-		idToCluster:          make(map[int]int),
-		Distance:             core.Euclidean,
-		numCandidateClusters: 3,
+		dimension:               dimension,
+		coarseK:                 coarseK,
+		coarseCentroids:         make([][]float32, 0),
+		clusterCounts:           make(map[int]int),
+		invertedLists:           make(map[int][]pqEntry),
+		numSubquantizers:        numSubquantizers,
+		codebooks:               nil,
+		pqK:                     pqK,
+		kMeansIters:             kMeansIters,
+		idToCluster:             make(map[int]int),
+		Distance:                core.Euclidean,
+		numCandidateClusters:    3,
+		AllowBruteForceFallback: true,
 	}
 }
 
@@ -576,7 +579,8 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 		}
 	}
 	// If still not enough, take all available entries.
-	if len(entries) < k {
+	if len(entries) < k && pq.AllowBruteForceFallback {
+		log.Warn().Msgf("Search for k=%d yielded only %d candidates. Falling back to brute-force scan.", k, len(entries))
 		var allEntries []pqEntry
 		for _, list := range pq.invertedLists {
 			allEntries = append(allEntries, list...)
@@ -632,15 +636,16 @@ func (pq *PQIVFIndex) Stats() core.IndexStats {
 
 // serializedPQIVF is a serializable representation of the PQIVF index.
 type serializedPQIVF struct {
-	Dimension        int
-	CoarseK          int
-	CoarseCentroids  [][]float32
-	ClusterCounts    map[int]int
-	InvertedLists    map[int][]pqEntry
-	NumSubquantizers int
-	Codebooks        [][][]float32
-	PqK              int
-	KMeansIters      int
+	Dimension               int
+	CoarseK                 int
+	CoarseCentroids         [][]float32
+	ClusterCounts           map[int]int
+	InvertedLists           map[int][]pqEntry
+	NumSubquantizers        int
+	Codebooks               [][][]float32
+	PqK                     int
+	KMeansIters             int
+	AllowBruteForceFallback bool
 }
 
 // GobEncode serializes the index into bytes using gob.
@@ -648,15 +653,16 @@ func (pq *PQIVFIndex) GobEncode() ([]byte, error) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
 	ser := serializedPQIVF{
-		Dimension:        pq.dimension,
-		CoarseK:          pq.coarseK,
-		CoarseCentroids:  pq.coarseCentroids,
-		ClusterCounts:    pq.clusterCounts,
-		InvertedLists:    pq.invertedLists,
-		NumSubquantizers: pq.numSubquantizers,
-		Codebooks:        pq.codebooks,
-		PqK:              pq.pqK,
-		KMeansIters:      pq.kMeansIters,
+		Dimension:               pq.dimension,
+		CoarseK:                 pq.coarseK,
+		CoarseCentroids:         pq.coarseCentroids,
+		ClusterCounts:           pq.clusterCounts,
+		InvertedLists:           pq.invertedLists,
+		NumSubquantizers:        pq.numSubquantizers,
+		Codebooks:               pq.codebooks,
+		PqK:                     pq.pqK,
+		KMeansIters:             pq.kMeansIters,
+		AllowBruteForceFallback: pq.AllowBruteForceFallback,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -683,6 +689,7 @@ func (pq *PQIVFIndex) GobDecode(data []byte) error {
 	pq.codebooks = ser.Codebooks
 	pq.pqK = ser.PqK
 	pq.kMeansIters = ser.KMeansIters
+	pq.AllowBruteForceFallback = ser.AllowBruteForceFallback
 	pq.idToCluster = make(map[int]int)
 	// Rebuild idToCluster mapping from the inverted lists.
 	for cluster, entries := range pq.invertedLists {
