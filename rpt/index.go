@@ -188,8 +188,12 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 	if len(ids) > parallelThreshold {
 		var wg sync.WaitGroup
 		wg.Add(2)
-		leftRnd := rand.New(rand.NewSource(core.GetSeed() + 1))
-		rightRnd := rand.New(rand.NewSource(core.GetSeed() + 2))
+
+		leftSeed := rnd.Int63()
+		rightSeed := rnd.Int63()
+		leftRnd := rand.New(rand.NewSource(leftSeed))
+		rightRnd := rand.New(rand.NewSource(rightSeed))
+
 		go func() {
 			defer wg.Done()
 			leftChild = buildTreeRecursive(bestCandidate.leftIDs, points, dimension, distance,
