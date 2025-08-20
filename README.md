@@ -207,10 +207,10 @@ Set the `HANN_BENCH_NTRD` environment variable to control how many threads are u
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to make a contribution.
 
-### Logo
-
-The logo is named the "Hiking Gopher" and was created by [Egon Elbre](https://github.com/egonelbre/gophers).
-
 ### License
 
 Hann is licensed under the MIT License ([LICENSE](LICENSE)).
+
+### Acknowledgments
+
+* The logo is named the "Hiking Gopher" and was created by [Egon Elbre](https://github.com/egonelbre/gophers).
