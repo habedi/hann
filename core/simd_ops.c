@@ -1,14 +1,28 @@
 #include "simd_ops.h"
+#include "simd_distance.h"
 #include <immintrin.h>
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 
-/**
- * @brief Computes the horizontal sum of a 256-bit vector.
- *
- * @param v The 256-bit vector.
- * @return The sum of all elements in the vector.
- */
+// Function pointer for the normalization function
+void (*simd_normalize_ptr)(float*, size_t);
+
+// Fallback implementation for normalization
+void normalize_fallback(float *vec, size_t len) {
+    float sum = 0.0f;
+    for (size_t i = 0; i < len; i++) {
+        sum += vec[i] * vec[i];
+    }
+    float norm = sqrtf(sum);
+    if (norm == 0.0f) return;
+    for (size_t i = 0; i < len; i++) {
+        vec[i] /= norm;
+    }
+}
+
+// AVX implementation for normalization
+#ifdef __AVX__
 static inline float horizontal_sum256(__m256 v) {
     __m128 vlow = _mm256_castps256_ps128(v);
     __m128 vhigh = _mm256_extractf128_ps(v, 1);
@@ -20,24 +34,13 @@ static inline float horizontal_sum256(__m256 v) {
     return _mm_cvtss_f32(sums);
 }
 
-/**
- * @brief Normalizes a vector using AVX instructions.
- *
- * This function normalizes the input vector by dividing each element by the vector's norm.
- *
- * @param vec Pointer to the vector to be normalized.
- * @param len The number of elements in the vector.
- */
-void avx_normalize(float *vec, size_t len) {
+void normalize_avx(float *vec, size_t len) {
     __m256 sum = _mm256_setzero_ps();
-    size_t i;
-    for (i = 0; i <= len - 8; i += 8) {
+    size_t i = 0;
+    size_t limit = len - (len % 8);
+    for (; i < limit; i += 8) {
         __m256 v = _mm256_loadu_ps(&vec[i]);
-#ifdef __FMA__
-        sum = _mm256_fmadd_ps(v, v, sum);
-#else
         sum = _mm256_add_ps(sum, _mm256_mul_ps(v, v));
-#endif
     }
     float total = horizontal_sum256(sum);
     for (; i < len; i++) {
@@ -46,7 +49,8 @@ void avx_normalize(float *vec, size_t len) {
     float norm = sqrtf(total);
     if (norm == 0.0f) return;
     __m256 norm_vec = _mm256_set1_ps(norm);
-    for (i = 0; i <= len - 8; i += 8) {
+    i = 0;
+    for (; i < limit; i += 8) {
         __m256 v = _mm256_loadu_ps(&vec[i]);
         v = _mm256_div_ps(v, norm_vec);
         _mm256_storeu_ps(&vec[i], v);
@@ -54,4 +58,61 @@ void avx_normalize(float *vec, size_t len) {
     for (; i < len; i++) {
         vec[i] /= norm;
     }
+}
+#else
+void normalize_avx(float *vec, size_t len) {
+    normalize_fallback(vec, len);
+}
+#endif
+
+// AVX2 implementation for normalization
+#if defined(__AVX2__) && defined(__FMA__)
+void normalize_avx2(float *vec, size_t len) {
+    __m256 sum = _mm256_setzero_ps();
+    size_t i = 0;
+    size_t limit = len - (len % 8);
+    for (; i < limit; i += 8) {
+        __m256 v = _mm256_loadu_ps(&vec[i]);
+        sum = _mm256_fmadd_ps(v, v, sum);
+    }
+    float total = horizontal_sum256(sum);
+    for (; i < len; i++) {
+        total += vec[i] * vec[i];
+    }
+    float norm = sqrtf(total);
+    if (norm == 0.0f) return;
+    __m256 norm_vec = _mm256_set1_ps(norm);
+    i = 0;
+    for (; i < limit; i += 8) {
+        __m256 v = _mm256_loadu_ps(&vec[i]);
+        v = _mm256_div_ps(v, norm_vec);
+        _mm256_storeu_ps(&vec[i], v);
+    }
+    for (; i < len; i++) {
+        vec[i] /= norm;
+    }
+}
+#else
+void normalize_avx2(float *vec, size_t len) {
+    normalize_avx(vec, len);
+}
+#endif
+
+void hann_cpu_init(int support_level) {
+    switch (support_level) {
+        case 2: // AVX2
+            simd_normalize_ptr = normalize_avx2;
+            break;
+        case 1: // AVX
+            simd_normalize_ptr = normalize_avx;
+            break;
+        default: // Fallback
+            simd_normalize_ptr = normalize_fallback;
+            break;
+    }
+    init_distance_functions(support_level);
+}
+
+void simd_normalize(float *vec, size_t len) {
+    simd_normalize_ptr(vec, len);
 }

@@ -3,16 +3,17 @@ package rpt
 import (
 	"bytes"
 	"encoding/gob"
-	"errors"
 	"fmt"
-	"github.com/habedi/hann/core"
-	"github.com/schollz/progressbar/v3"
 	"io"
 	"math"
 	"math/rand"
 	"runtime"
 	"sort"
 	"sync"
+
+	"github.com/habedi/hann/core"
+	"github.com/rs/zerolog/log"
+	"github.com/schollz/progressbar/v3"
 )
 
 // NewRPTIndex creates a new RPT (Random Projection Tree) index.
@@ -25,15 +26,16 @@ func NewRPTIndex(
 	probeMargin float64,
 ) *RPTIndex {
 	return &RPTIndex{
-		dimension:            dimension,
-		points:               make(map[int][]float32),
-		dirty:                true, // marks that the tree needs to be rebuilt
-		LeafCapacity:         leafCapacity,
-		CandidateProjections: candidateProjections,
-		ParallelThreshold:    parallelThreshold,
-		ProbeMargin:          probeMargin,
-		Distance:             core.Euclidean, // default distance function
-		DistanceName:         "euclidean",
+		dimension:               dimension,
+		points:                  make(map[int][]float32),
+		dirty:                   true, // marks that the tree needs to be rebuilt
+		LeafCapacity:            leafCapacity,
+		CandidateProjections:    candidateProjections,
+		ParallelThreshold:       parallelThreshold,
+		ProbeMargin:             probeMargin,
+		Distance:                core.Euclidean, // default distance function
+		DistanceName:            "euclidean",
+		AllowBruteForceFallback: true,
 	}
 }
 
@@ -52,17 +54,18 @@ type treeNode struct {
 // RPTIndex is the main structure for the random projection tree index.
 // It holds all points, the tree root, and configuration parameters.
 type RPTIndex struct {
-	mu                   sync.RWMutex      // protects concurrent access
-	dimension            int               // dimension of each vector
-	points               map[int][]float32 // mapping of point id to vector
-	tree                 *treeNode         // root of the random projection tree
-	dirty                bool              // indicates if the tree needs to be rebuilt
-	Distance             core.DistanceFunc // function to compute distance between vectors
-	DistanceName         string            // name of the distance metric
-	LeafCapacity         int               // maximum number of points in a leaf
-	CandidateProjections int               // number of random projections to try when splitting
-	ParallelThreshold    int               // threshold to trigger parallel tree building
-	ProbeMargin          float64           // margin for multi-probe search
+	mu                      sync.RWMutex      // protects concurrent access
+	dimension               int               // dimension of each vector
+	points                  map[int][]float32 // mapping of point id to vector
+	tree                    *treeNode         // root of the random projection tree
+	dirty                   bool              // indicates if the tree needs to be rebuilt
+	Distance                core.DistanceFunc // function to compute distance between vectors
+	DistanceName            string            // name of the distance metric
+	LeafCapacity            int               // maximum number of points in a leaf
+	CandidateProjections    int               // number of random projections to try when splitting
+	ParallelThreshold       int               // threshold to trigger parallel tree building
+	ProbeMargin             float64           // margin for multi-probe search
+	AllowBruteForceFallback bool              // whether to allow falling back to a full brute-force scan
 }
 
 // buildTreeRecursive builds the tree recursively using random projections.
@@ -187,8 +190,12 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 	if len(ids) > parallelThreshold {
 		var wg sync.WaitGroup
 		wg.Add(2)
-		leftRnd := rand.New(rand.NewSource(core.GetSeed() + 1))
-		rightRnd := rand.New(rand.NewSource(core.GetSeed() + 2))
+
+		leftSeed := rnd.Int63()
+		rightSeed := rnd.Int63()
+		leftRnd := rand.New(rand.NewSource(leftSeed))
+		rightRnd := rand.New(rand.NewSource(rightSeed))
+
 		go func() {
 			defer wg.Done()
 			leftChild = buildTreeRecursive(bestCandidate.leftIDs, points, dimension, distance,
@@ -281,10 +288,11 @@ func unionInts(a, b []int) []int {
 
 // computeDistances calculates the distance from the query to each point id in the list.
 // It does this in parallel across available CPUs.
-func (r *RPTIndex) computeDistances(query []float32, ids []int) []core.Neighbor {
+func (r *RPTIndex) computeDistances(query []float32, ids []int) ([]core.Neighbor, error) {
 	neighbors := make([]core.Neighbor, len(ids))
 	numWorkers := runtime.NumCPU()
 	chunkSize := (len(ids) + numWorkers - 1) / numWorkers
+	errsCh := make(chan error, numWorkers)
 
 	var wg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
@@ -302,19 +310,35 @@ func (r *RPTIndex) computeDistances(query []float32, ids []int) []core.Neighbor 
 			for j := start; j < end; j++ {
 				id := ids[j]
 				vec := r.points[id]
-				d := r.Distance(query, vec)
+				d, err := r.Distance(query, vec)
+				if err != nil {
+					errsCh <- err
+					return
+				}
 				neighbors[j] = core.Neighbor{ID: id, Distance: d}
 			}
 		}(start, end)
 	}
 	wg.Wait()
-	return neighbors
+	close(errsCh)
+
+	for err := range errsCh {
+		if err != nil {
+			return nil, err // Return the first error encountered
+		}
+	}
+
+	return neighbors, nil
 }
 
 // Search returns the k nearest neighbors to the query vector.
 // It rebuilds the tree if needed and uses multi-probe search to get candidate ids.
 func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	r.mu.RLock()
+	if k <= 0 {
+		r.mu.RUnlock()
+		return nil, fmt.Errorf("k must be positive")
+	}
 	if len(query) != r.dimension {
 		r.mu.RUnlock()
 		return nil, fmt.Errorf("query dimension %d does not match index dimension %d",
@@ -322,7 +346,7 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	}
 	if len(r.points) == 0 {
 		r.mu.RUnlock()
-		return nil, errors.New("index is empty")
+		return nil, nil // Return empty slice for empty index
 	}
 	// Copy the query to avoid modifying the original.
 	queryCopy := make([]float32, len(query))
@@ -349,9 +373,23 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	r.mu.RUnlock()
 
 	// Compute distances for candidate points.
-	neighbors := r.computeDistances(query, candidateIDs)
+	neighbors, err := r.computeDistances(query, candidateIDs)
+	if err != nil {
+		return nil, err
+	}
 	// If still not enough, add extra points.
 	if len(neighbors) < k {
+		if !r.AllowBruteForceFallback {
+			// Return what we have, even if it's less than k
+			sort.Slice(neighbors, func(i, j int) bool {
+				return neighbors[i].Distance < neighbors[j].Distance
+			})
+			if k > len(neighbors) {
+				k = len(neighbors)
+			}
+			return neighbors[:k], nil
+		}
+		log.Warn().Msgf("Search for k=%d yielded only %d candidates. Falling back to brute-force scan.", k, len(neighbors))
 		r.mu.RLock()
 		candidateSet := make(map[int]struct{}, len(candidateIDs))
 		for _, id := range candidateIDs {
@@ -364,7 +402,10 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 			}
 		}
 		r.mu.RUnlock()
-		extraNeighbors := r.computeDistances(query, missingIDs)
+		extraNeighbors, err := r.computeDistances(query, missingIDs)
+		if err != nil {
+			return nil, err
+		}
 		neighbors = append(neighbors, extraNeighbors...)
 	}
 	// Sort by distance.
@@ -510,9 +551,14 @@ func (r *RPTIndex) Stats() core.IndexStats {
 
 // rptSerialized is used to serialize the index using gob.
 type rptSerialized struct {
-	Dimension    int
-	Points       map[int][]float32
-	DistanceName string
+	Dimension               int
+	Points                  map[int][]float32
+	DistanceName            string
+	LeafCapacity            int
+	CandidateProjections    int
+	ParallelThreshold       int
+	ProbeMargin             float64
+	AllowBruteForceFallback bool
 }
 
 // GobEncode serializes the index to bytes using gob.
@@ -520,9 +566,14 @@ func (r *RPTIndex) GobEncode() ([]byte, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	ser := rptSerialized{
-		Dimension:    r.dimension,
-		Points:       r.points,
-		DistanceName: "euclidean",
+		Dimension:               r.dimension,
+		Points:                  r.points,
+		DistanceName:            "euclidean",
+		LeafCapacity:            r.LeafCapacity,
+		CandidateProjections:    r.CandidateProjections,
+		ParallelThreshold:       r.ParallelThreshold,
+		ProbeMargin:             r.ProbeMargin,
+		AllowBruteForceFallback: r.AllowBruteForceFallback,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -543,6 +594,11 @@ func (r *RPTIndex) GobDecode(data []byte) error {
 	r.dimension = ser.Dimension
 	r.points = ser.Points
 	r.DistanceName = "euclidean"
+	r.LeafCapacity = ser.LeafCapacity
+	r.CandidateProjections = ser.CandidateProjections
+	r.ParallelThreshold = ser.ParallelThreshold
+	r.ProbeMargin = ser.ProbeMargin
+	r.AllowBruteForceFallback = ser.AllowBruteForceFallback
 	r.dirty = true // mark tree as dirty so it will be rebuilt
 	return nil
 }

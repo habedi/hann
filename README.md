@@ -23,7 +23,7 @@ A fast approximate nearest neighbor search library for Go
 
 Hann is a high-performance approximate nearest neighbor search (ANN) library for Go.
 It provides a collection of index data structures for efficient similarity search in high-dimensional spaces.
-Currently, supported indexes include Hierarchical Navigable Small World (HNSW),
+Supported indexes include Hierarchical Navigable Small World (HNSW),
 Product Quantization Inverted File (PQIVF), and Random Projection Tree (RPT).
 
 Hann can be seen as a core component of a vector database (like Milvus, Pinecone, Weaviate, Qdrant, etc.).
@@ -34,16 +34,16 @@ It can be used to add fast in-memory similarity search capabilities to your Go a
 - Unified interface for different indexes (see [core/index.go](core/index.go))
 - Support for indexing and searching vectors of arbitrary dimension
 - Fast distance computation using SIMD (AVX) instructions (see [core/simd_distance.c](core/simd_distance.c))
-- Support for bulk insertion, deletion, and update of vectors
+- Support for bulk insertion, deletion, and updates
 - Support for saving indexes to disk and loading them back
 
 ### Indexes
 
-| Index Name                                            | Space Complexity | Build Complexity | Search Complexity                             | 
+| Index Name                                            | Space Complexity | Build Complexity | Search Complexity                             |
 |-------------------------------------------------------|------------------|------------------|-----------------------------------------------|
-| [HNSW](https://arxiv.org/abs/1603.09320)              | $O(nd + nM)$     | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case | 
-| [PQIVF](https://ieeexplore.ieee.org/document/5432202) | $O(nk + kd)$     | $O(nki)$         | $O(\frac{n}{k})$                              | 
-| [RPT](https://dl.acm.org/doi/10.1145/1374376.1374452) | $O(nd)$          | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case | 
+| [HNSW](https://arxiv.org/abs/1603.09320)              | $O(nd + nM)$     | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case |
+| [PQIVF](https://ieeexplore.ieee.org/document/5432202) | $O(nk + kd)$     | $O(nki)$         | $O(\frac{n}{k})$                              |
+| [RPT](https://dl.acm.org/doi/10.1145/1374376.1374452) | $O(nd)$          | $O(n\log n)$     | $O(\log n)$ average case<br>$O(n)$ worst case |
 
 - $n$: number of vectors
 - $d$: number of dimensions (vector length)
@@ -126,7 +126,7 @@ The index has the following configurable parameters:
 - **M**: Controls the maximum number of neighbor connections per node. Higher values improve accuracy but increase
   memory and indexing time (typical range: 5–48).
 - **Ef**: Defines search breadth during insertion and searching. Higher values improve accuracy but
-  increase computational cost (typical range: 10–200).
+  increase computational cost for indexing and searching (typical range: 10–200).
 
 #### PQIVF Index
 
@@ -136,6 +136,11 @@ PQIVF first clusters data into coarse groups (inverted lists), then compresses v
 quantization](https://ieeexplore.ieee.org/document/5432202).
 This allows fast approximate nearest neighbor searches by limiting queries to relevant clusters and
 efficiently comparing compressed vectors, which reduces search time and storage requirements.
+
+> [!NOTE]
+> Before searching, the index must be trained using the `Train()` method.
+> This method should be called after adding data to the index.
+> Any operation that invalidates the trained state of the index (like `BulkDelete`) will need the index to be retrained.
 
 The index has the following configurable parameters:
 
@@ -202,10 +207,10 @@ Set the `HANN_BENCH_NTRD` environment variable to control how many threads are u
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to make a contribution.
 
-### Logo
-
-The logo is named the "Hiking Gopher" and was created by [Egon Elbre](https://github.com/egonelbre/gophers).
-
 ### License
 
 Hann is licensed under the MIT License ([LICENSE](LICENSE)).
+
+### Acknowledgments
+
+* The logo is named the "Hiking Gopher" and was created by [Egon Elbre](https://github.com/egonelbre/gophers).

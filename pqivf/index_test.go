@@ -64,6 +64,10 @@ func TestPQIVF_Search(t *testing.T) {
 		}
 	}
 
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
 	query := []float32{1, 2, 3, 4, 5, 6}
 	neighbors, err := idx.Search(query, 2)
 	if err != nil {
@@ -110,6 +114,9 @@ func TestPQIVF_BulkOperations(t *testing.T) {
 		t.Fatalf("BulkUpdate failed: %v", err)
 	}
 
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
 	// Verify an update via search.
 	query := []float32{1, 1, 1, 1, 1, 1}
 	neighbors, err := idx.Search(query, 2)
@@ -175,6 +182,51 @@ func TestPQIVF_SaveLoad(t *testing.T) {
 	}
 }
 
+func TestPQIVF_TrainAndSearch(t *testing.T) {
+	dim := 6
+	coarseK := 3
+	numSubquantizers := 2
+	pqK := 256
+	kMeansIters := 10
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+
+	// Insert data.
+	vectors := map[int][]float32{
+		1: {1, 2, 3, 4, 5, 6},
+		2: {6, 5, 4, 3, 2, 1},
+		3: {1, 1, 1, 1, 1, 1},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+
+	// Search before training should fail.
+	query := []float32{1, 2, 3, 4, 5, 6}
+	if _, err := idx.Search(query, 1); err == nil {
+		t.Fatal("expected search on untrained index to fail, but it succeeded")
+	}
+
+	// Train the index.
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
+	// Search after training should succeed.
+	if _, err := idx.Search(query, 1); err != nil {
+		t.Fatalf("search on trained index failed: %v", err)
+	}
+
+	// BulkDelete should invalidate training.
+	if err := idx.BulkDelete([]int{1}); err != nil {
+		t.Fatalf("BulkDelete failed: %v", err)
+	}
+
+	// Search after BulkDelete should fail.
+	if _, err := idx.Search(query, 1); err == nil {
+		t.Fatal("expected search after BulkDelete to fail, but it succeeded")
+	}
+}
+
 func TestPQIVF_ConcurrentOperations(t *testing.T) {
 	dim := 6
 	coarseK := 3
@@ -207,5 +259,84 @@ func TestPQIVF_ConcurrentOperations(t *testing.T) {
 	stats := idx.Stats()
 	if stats.Count != numVectors {
 		t.Errorf("expected %d vectors, got %d", numVectors, stats.Count)
+	}
+}
+
+func TestPQIVF_EdgeCases(t *testing.T) {
+	dim := 4
+	coarseK := 2
+	numSubquantizers := 2
+	pqK := 256
+	kMeansIters := 5
+
+	// Test with zero dimension.
+	zeroDimIdx := pqivf.NewPQIVFIndex(0, coarseK, numSubquantizers, pqK, kMeansIters)
+	if err := zeroDimIdx.Add(1, []float32{}); err == nil {
+		t.Error("expected error when adding a vector to a zero-dimension index, but got none")
+	}
+
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+
+	// Train on empty index.
+	if err := idx.Train(); err == nil {
+		t.Error("expected error training on an empty index, but got none")
+	}
+
+	// Search on empty index.
+	if _, err := idx.Search([]float32{1, 2, 3, 4}, 1); err == nil {
+		t.Error("expected error searching on an empty index, but got none")
+	}
+
+	// Add a vector.
+	vec1 := []float32{1, 1, 1, 1}
+	if err := idx.Add(1, vec1); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	// Add with duplicate ID.
+	if err := idx.Add(1, vec1); err == nil {
+		t.Error("expected error when adding a duplicate ID, but got none")
+	}
+
+	// Operations with wrong dimension vector.
+	wrongDimVec := []float32{1, 2, 3}
+	if err := idx.Add(2, wrongDimVec); err == nil {
+		t.Error("expected error adding vector with wrong dimension, but got none")
+	}
+	if err := idx.Update(1, wrongDimVec); err == nil {
+		t.Error("expected error updating with vector of wrong dimension, but got none")
+	}
+	if _, err := idx.Search(wrongDimVec, 1); err == nil {
+		t.Error("expected error searching with vector of wrong dimension, but got none")
+	}
+
+	// Train with insufficient data for clustering.
+	if err := idx.Train(); err == nil {
+		t.Error("expected error training with insufficient data, but got none")
+	}
+
+	// Add more data to allow for training.
+	if err := idx.BulkAdd(map[int][]float32{
+		2: {2, 2, 2, 2},
+		3: {3, 3, 3, 3},
+	}); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
+	// Search with k=0.
+	if _, err := idx.Search(vec1, 0); err == nil {
+		t.Error("expected error searching with k=0, but got none")
+	}
+
+	// Search with k > number of items.
+	neighbors, err := idx.Search(vec1, 5)
+	if err != nil {
+		t.Fatalf("Search with k > num items failed: %v", err)
+	}
+	if len(neighbors) != 2 {
+		t.Errorf("expected 2 neighbors, got %d", len(neighbors))
 	}
 }

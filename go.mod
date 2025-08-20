@@ -3,8 +3,6 @@ module github.com/habedi/hann
 // Minimum supported Go version
 go 1.22
 
-toolchain go1.24.1
-
 require (
 	github.com/rs/zerolog v1.34.0
 	github.com/schollz/progressbar/v3 v3.18.0

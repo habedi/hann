@@ -10,6 +10,7 @@ HF_DATASET := "nearest-neighbors-datasets"
 HANN_SEED := 33
 HANN_LOG := 1
 HANN_BENCH_NTRD := 6
+REMOVABLE_FILES_AND_DIRS := *_prof *.pb.gz *.prof
 
 # List of packages to test (excluding example/cmd)
 PACKAGES := $(shell $(GO) list ./... | grep -v $(EXAMPLES_DIR))
@@ -31,7 +32,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help
-help: ## Show the help message for each target (command)
+help: ## Show the help message for each target
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; \
  	{printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
@@ -56,7 +57,7 @@ clean: ## Remove build artifacts and temporary files
 	@$(GO) clean -cache -testcache -modcache
 	@find . -type f -name '*.got.*' -delete
 	@find . -type f -name '*.out' -delete
-	@rm -f $(COVER_PROFILE)
+	@rm -f $(COVER_PROFILE) $(REMOVABLE_FILES_AND_DIRS)
 
 .PHONY: install-snap
 install-snap: ## Install Snap (for Debian-based systems)
@@ -68,12 +69,17 @@ install-snap: ## Install Snap (for Debian-based systems)
 .PHONY: install-deps
 install-deps: ## Install development dependencies (for Debian-based systems)
 	$(ECHO) "Installing dependencies..."
-	@$(MAKE) install-snap
-	@sudo snap install go --classic
-	@sudo snap install golangci-lint --classic
-	@sudo apt-get install -y python3-poetry
-	@$(GO) install github.com/google/pprof@latest
-	@$(GO) mod download
+ifeq ($(CI),true)
+	echo "Skipping Go installation in CI"
+else
+	echo "Installing Go and golangci-lint using Snap..."
+	$(MAKE) install-snap
+	sudo snap install go --classic
+	sudo snap install golangci-lint --classic
+endif
+	sudo apt-get install -y python3-poetry
+	$(GO) install github.com/google/pprof@latest
+	$(GO) mod download
 
 .PHONY: lint
 lint: format ## Run the linter checks
@@ -111,3 +117,19 @@ run-benches: format ## Run the benchmarks
 	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_hnsw.go
 	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_pqivf.go
 	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_rpt.go
+
+.PHONY: setup-hooks
+setup-hooks: ## Install Git hooks (pre-commit and pre-push)
+	@echo "Setting up Git hooks..."
+	@if ! command -v pre-commit &> /dev/null; then \
+	   echo "pre-commit not found. Please install it using 'pip install pre-commit'"; \
+	   exit 1; \
+	fi
+	@pre-commit install --hook-type pre-commit
+	@pre-commit install --hook-type pre-push
+	@pre-commit install-hooks
+
+.PHONY: test-hooks
+test-hooks: ## Test Git hooks on all files
+	@echo "Testing Git hooks..."
+	@pre-commit run --all-files --show-diff-on-failure

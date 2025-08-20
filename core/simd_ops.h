@@ -7,8 +7,11 @@
 extern "C" {
 #endif
 
-// Normalizes a single vector using AVX.
-void avx_normalize(float *vec, size_t len);
+// Initializes the SIMD operations based on CPU support.
+void hann_cpu_init(int support_level);
+
+// Normalizes a single vector.
+void simd_normalize(float *vec, size_t len);
 
 #ifdef __cplusplus
 }

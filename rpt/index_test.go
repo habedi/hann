@@ -248,3 +248,55 @@ func TestRPTIndex_ErrorOnWrongVectorDimension(t *testing.T) {
 		t.Errorf("expected error for wrong vector dimension in BulkAdd, but got none")
 	}
 }
+
+func TestRPTIndex_EdgeCases(t *testing.T) {
+	dim := 4
+	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin)
+
+	// Search on empty index.
+	if _, err := idx.Search([]float32{1, 2, 3, 4}, 1); err != nil {
+		t.Errorf("expected no error searching on an empty index, but got: %v", err)
+	}
+
+	// Search with k=0.
+	if _, err := idx.Search([]float32{1, 2, 3, 4}, 0); err == nil {
+		t.Error("expected error searching with k=0, but got none")
+	}
+
+	// Add a vector.
+	vec1 := []float32{1, 1, 1, 1}
+	if err := idx.Add(1, vec1); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	// Search with k > number of items.
+	neighbors, err := idx.Search(vec1, 5)
+	if err != nil {
+		t.Fatalf("Search with k > num items failed: %v", err)
+	}
+	if len(neighbors) != 1 {
+		t.Errorf("expected 1 neighbor, got %d", len(neighbors))
+	}
+
+	// Bulk operations with non-existent IDs.
+	if err := idx.BulkDelete([]int{99}); err != nil {
+		t.Errorf("BulkDelete with non-existent ID should not fail, but got: %v", err)
+	}
+	if err := idx.BulkUpdate(map[int][]float32{99: {1, 2, 3, 4}}); err == nil {
+		t.Error("expected error on BulkUpdate with non-existent ID, but got none")
+	}
+
+	// Save and load empty index.
+	emptyIdx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin)
+	var buf bytes.Buffer
+	if err := emptyIdx.Save(&buf); err != nil {
+		t.Fatalf("Save on empty index failed: %v", err)
+	}
+	newEmptyIdx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
+		defaultParallelThreshold, defaultProbeMargin)
+	if err := newEmptyIdx.Load(bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("Load on empty index failed: %v", err)
+	}
+}

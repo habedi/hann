@@ -4,12 +4,13 @@
 package main
 
 import (
+	"os"
+
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/example"
 	"github.com/habedi/hann/pqivf"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"os"
 )
 
 func main() {
@@ -26,7 +27,7 @@ func PQIVFIndexGIST() {
 		coarseK := 16
 		numSubquantizers := 8
 		pqK := 256
-		kMeansIters := 10
+		kMeansIters := 25
 		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters)
 	}
 

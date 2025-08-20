@@ -4,12 +4,13 @@
 package main
 
 import (
+	"os"
+
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/example"
 	"github.com/habedi/hann/hnsw"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"os"
 )
 
 func main() {
@@ -18,7 +19,7 @@ func main() {
 
 	// Using HNSW index with FashionMNIST and Glove datasets
 	HNSWIndexFashionMNIST()
-	//BenchHNSWIndexGlove25()
+	HNSWIndexGlove25()
 	HNSWIndexGlove200()
 }
 

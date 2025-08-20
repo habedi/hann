@@ -1,9 +1,10 @@
 package core
 
 import (
-	"github.com/rs/zerolog/log"
 	"os"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/rs/zerolog"
 )

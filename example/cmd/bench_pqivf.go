@@ -4,14 +4,15 @@
 package main
 
 import (
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/example"
 	"github.com/habedi/hann/pqivf"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"net/http"
-	_ "net/http/pprof"
-	"os"
 )
 
 func main() {
@@ -38,7 +39,7 @@ func BenchPQIVFIndexFashionMNIST() {
 		coarseK := 16
 		numSubquantizers := 8
 		pqK := 256
-		kMeansIters := 10
+		kMeansIters := 25
 		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters)
 	}
 
@@ -52,7 +53,7 @@ func BenchPQIVFIndexSIFT() {
 		coarseK := 16
 		numSubquantizers := 8
 		pqK := 256
-		kMeansIters := 10
+		kMeansIters := 25
 		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters)
 	}
 

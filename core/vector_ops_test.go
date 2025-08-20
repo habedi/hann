@@ -23,6 +23,10 @@ func TestNormalizeVector(t *testing.T) {
 			vec:      []float32{0, 0, 0, 0, 0, 0, 0, 0},
 			expected: []float32{0, 0, 0, 0, 0, 0, 0, 0},
 		},
+		{
+			vec:      []float32{},
+			expected: []float32{},
+		},
 	}
 
 	for _, tt := range tests {
@@ -35,6 +39,52 @@ func TestNormalizeVector(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+func TestNormalizeBatchEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		vecs     [][]float32
+		expected [][]float32
+	}{
+		{
+			name:     "Empty batch",
+			vecs:     [][]float32{},
+			expected: [][]float32{},
+		},
+		{
+			name:     "Batch with empty vector",
+			vecs:     [][]float32{{1, 2, 3}, {}, {4, 5, 6}},
+			expected: [][]float32{{0.267261, 0.534522, 0.801784}, {}, {0.455842, 0.569803, 0.683763}},
+		},
+		{
+			name:     "Batch with different length vectors",
+			vecs:     [][]float32{{1, 2}, {3, 4, 5}},
+			expected: [][]float32{{0.447214, 0.894427}, {0.424264, 0.565685, 0.707107}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			NormalizeBatch(tt.vecs)
+			if len(tt.vecs) == 0 && len(tt.expected) == 0 {
+				return // success
+			}
+
+			for idx, vec := range tt.vecs {
+				if len(vec) == 0 && len(tt.expected[idx]) == 0 {
+					continue // success
+				}
+				for i := range vec {
+					if math.Abs(float64(vec[i]-tt.expected[idx][i])) > 1e-5 {
+						t.Errorf("NormalizeBatch edge cases failed at vector %d.\nGot:      %v\nExpected: %v",
+							idx, vec, tt.expected[idx])
+						break
+					}
+				}
+			}
+		})
 	}
 }
 
