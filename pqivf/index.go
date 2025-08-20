@@ -43,6 +43,7 @@ type PQIVFIndex struct {
 	Distance                core.DistanceFunc // function to compute distance between vectors
 	numCandidateClusters    int               // number of candidate clusters to consider during search
 	AllowBruteForceFallback bool              // whether to allow falling back to a full brute-force scan
+	trained                 bool
 }
 
 // recalcCentroid recalculates the centroid for a given cluster based on its current entries.
@@ -82,6 +83,7 @@ func NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters int) *
 		Distance:                core.Euclidean,
 		numCandidateClusters:    3,
 		AllowBruteForceFallback: true,
+		trained:                 false,
 	}
 }
 
@@ -159,6 +161,7 @@ func (pq *PQIVFIndex) Add(id int, vector []float32) error {
 	}
 	pq.invertedLists[cluster] = append(pq.invertedLists[cluster], entry)
 	pq.recalcCentroid(cluster)
+	pq.trained = false
 	return nil
 }
 
@@ -223,6 +226,7 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 	for cluster := range updatedClusters {
 		pq.recalcCentroid(cluster)
 	}
+	pq.trained = false
 	return nil
 }
 
@@ -257,6 +261,7 @@ func (pq *PQIVFIndex) Delete(id int) error {
 	if len(newEntries) > 0 {
 		pq.recalcCentroid(cluster)
 	}
+	pq.trained = false
 	return nil
 }
 
@@ -310,6 +315,7 @@ func (pq *PQIVFIndex) BulkDelete(ids []int) error {
 	for cluster := range updatedClusters {
 		pq.recalcCentroid(cluster)
 	}
+	pq.trained = false
 	return nil
 }
 
@@ -318,7 +324,11 @@ func (pq *PQIVFIndex) Update(id int, vector []float32) error {
 	if err := pq.Delete(id); err != nil {
 		return err
 	}
-	return pq.Add(id, vector)
+	if err := pq.Add(id, vector); err != nil {
+		return err
+	}
+	pq.trained = false
+	return nil
 }
 
 // BulkUpdate updates multiple entries with new vectors.
@@ -342,6 +352,7 @@ func (pq *PQIVFIndex) BulkUpdate(updates map[int][]float32) error {
 			return err
 		}
 	}
+	pq.trained = false
 	return nil
 }
 
@@ -398,6 +409,7 @@ func (pq *PQIVFIndex) Train() error {
 		}
 	}
 
+	pq.trained = true
 	return nil
 }
 
@@ -547,6 +559,10 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
 
+	if !pq.trained {
+		return nil, fmt.Errorf("PQIVF index is not trained. Call Train() after adding data before searching")
+	}
+
 	if len(query) != pq.dimension {
 		return nil, fmt.Errorf("query dimension %d does not match index dimension %d", len(query), pq.dimension)
 	}
@@ -646,6 +662,7 @@ type serializedPQIVF struct {
 	PqK                     int
 	KMeansIters             int
 	AllowBruteForceFallback bool
+	Trained                 bool
 }
 
 // GobEncode serializes the index into bytes using gob.
@@ -663,6 +680,7 @@ func (pq *PQIVFIndex) GobEncode() ([]byte, error) {
 		PqK:                     pq.pqK,
 		KMeansIters:             pq.kMeansIters,
 		AllowBruteForceFallback: pq.AllowBruteForceFallback,
+		Trained:                 pq.trained,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -690,6 +708,7 @@ func (pq *PQIVFIndex) GobDecode(data []byte) error {
 	pq.pqK = ser.PqK
 	pq.kMeansIters = ser.KMeansIters
 	pq.AllowBruteForceFallback = ser.AllowBruteForceFallback
+	pq.trained = ser.Trained
 	pq.idToCluster = make(map[int]int)
 	// Rebuild idToCluster mapping from the inverted lists.
 	for cluster, entries := range pq.invertedLists {

@@ -137,6 +137,11 @@ quantization](https://ieeexplore.ieee.org/document/5432202).
 This allows fast approximate nearest neighbor searches by limiting queries to relevant clusters and
 efficiently comparing compressed vectors, which reduces search time and storage requirements.
 
+> [!NOTE]
+> Before searching, the index must be trained using the `Train()` method.
+> This method should be called after adding data to the index.
+> Any operation that invalidates the trained state of the index (like `BulkDelete`) will need the index to be retrained.
+
 The index has the following configurable parameters:
 
 - **coarseK**: Controls the number of coarse clusters for initial quantization. Higher values improve search performance

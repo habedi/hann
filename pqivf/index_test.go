@@ -64,6 +64,10 @@ func TestPQIVF_Search(t *testing.T) {
 		}
 	}
 
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
 	query := []float32{1, 2, 3, 4, 5, 6}
 	neighbors, err := idx.Search(query, 2)
 	if err != nil {
@@ -110,6 +114,9 @@ func TestPQIVF_BulkOperations(t *testing.T) {
 		t.Fatalf("BulkUpdate failed: %v", err)
 	}
 
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
 	// Verify an update via search.
 	query := []float32{1, 1, 1, 1, 1, 1}
 	neighbors, err := idx.Search(query, 2)
@@ -172,6 +179,50 @@ func TestPQIVF_SaveLoad(t *testing.T) {
 	stats := newIdx.Stats()
 	if stats.Count != len(vectors) {
 		t.Errorf("expected count %d after load, got %d", len(vectors), stats.Count)
+	}
+}
+
+func TestPQIVF_TrainAndSearch(t *testing.T) {
+	dim := 6
+	coarseK := 3
+	numSubquantizers := 2
+	pqK := 256
+	kMeansIters := 10
+	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+
+	// Insert data.
+	vectors := map[int][]float32{
+		1: {1, 2, 3, 4, 5, 6},
+		2: {6, 5, 4, 3, 2, 1},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+
+	// Search before training should fail.
+	query := []float32{1, 2, 3, 4, 5, 6}
+	if _, err := idx.Search(query, 1); err == nil {
+		t.Fatal("expected search on untrained index to fail, but it succeeded")
+	}
+
+	// Train the index.
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
+	// Search after training should succeed.
+	if _, err := idx.Search(query, 1); err != nil {
+		t.Fatalf("search on trained index failed: %v", err)
+	}
+
+	// BulkDelete should invalidate training.
+	if err := idx.BulkDelete([]int{1}); err != nil {
+		t.Fatalf("BulkDelete failed: %v", err)
+	}
+
+	// Search after BulkDelete should fail.
+	if _, err := idx.Search(query, 1); err == nil {
+		t.Fatal("expected search after BulkDelete to fail, but it succeeded")
 	}
 }
 
