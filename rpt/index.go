@@ -511,9 +511,13 @@ func (r *RPTIndex) Stats() core.IndexStats {
 
 // rptSerialized is used to serialize the index using gob.
 type rptSerialized struct {
-	Dimension    int
-	Points       map[int][]float32
-	DistanceName string
+	Dimension            int
+	Points               map[int][]float32
+	DistanceName         string
+	LeafCapacity         int     // Add this
+	CandidateProjections int     // Add this
+	ParallelThreshold    int     // Add this
+	ProbeMargin          float64 // Add this
 }
 
 // GobEncode serializes the index to bytes using gob.
@@ -521,9 +525,13 @@ func (r *RPTIndex) GobEncode() ([]byte, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	ser := rptSerialized{
-		Dimension:    r.dimension,
-		Points:       r.points,
-		DistanceName: "euclidean",
+		Dimension:            r.dimension,
+		Points:               r.points,
+		DistanceName:         "euclidean",
+		LeafCapacity:         r.LeafCapacity,
+		CandidateProjections: r.CandidateProjections,
+		ParallelThreshold:    r.ParallelThreshold,
+		ProbeMargin:          r.ProbeMargin,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -544,6 +552,10 @@ func (r *RPTIndex) GobDecode(data []byte) error {
 	r.dimension = ser.Dimension
 	r.points = ser.Points
 	r.DistanceName = "euclidean"
+	r.LeafCapacity = ser.LeafCapacity
+	r.CandidateProjections = ser.CandidateProjections
+	r.ParallelThreshold = ser.ParallelThreshold
+	r.ProbeMargin = ser.ProbeMargin
 	r.dirty = true // mark tree as dirty so it will be rebuilt
 	return nil
 }

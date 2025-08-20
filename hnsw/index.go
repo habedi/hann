@@ -135,13 +135,14 @@ type serializedNode struct {
 
 // serializedIndex is the serializable version of the HNSWIndex.
 type serializedIndex struct {
-	Dimension    int                    // dimension of the index
-	M            int                    // maximum neighbors per node
-	Ef           int                    // search parameter
-	Nodes        map[int]serializedNode // serialized nodes
-	EntryPoint   int                    // id of the entry point node
-	MaxLevel     int                    // maximum level in the graph
-	DistanceName string                 // name of the distance metric
+	Dimension        int                    // dimension of the index
+	M                int                    // maximum neighbors per node
+	Ef               int                    // search parameter
+	Nodes            map[int]serializedNode // serialized nodes
+	EntryPoint       int                    // id of the entry point node
+	MaxLevel         int                    // maximum level in the graph
+	DistanceName     string                 // name of the distance metric
+	ExhaustiveSearch bool                   // Add this field
 }
 
 // GobEncode serializes the HNSWIndex using the gob encoder.
@@ -149,13 +150,14 @@ func (h *HNSWIndex) GobEncode() ([]byte, error) {
 	h.Mu.RLock()
 	defer h.Mu.RUnlock()
 	si := serializedIndex{
-		Dimension:    h.Dimension,
-		M:            h.M,
-		Ef:           h.Ef,
-		Nodes:        make(map[int]serializedNode),
-		EntryPoint:   0,
-		MaxLevel:     h.MaxLevel,
-		DistanceName: h.DistanceName,
+		Dimension:        h.Dimension,
+		M:                h.M,
+		Ef:               h.Ef,
+		Nodes:            make(map[int]serializedNode),
+		EntryPoint:       0,
+		MaxLevel:         h.MaxLevel,
+		DistanceName:     h.DistanceName,
+		ExhaustiveSearch: h.ExhaustiveSearch,
 	}
 	for id, node := range h.Nodes {
 		sn := serializedNode{
@@ -198,6 +200,7 @@ func (h *HNSWIndex) GobDecode(data []byte) error {
 	h.Ef = si.Ef
 	h.MaxLevel = si.MaxLevel
 	h.DistanceName = si.DistanceName
+	h.ExhaustiveSearch = si.ExhaustiveSearch
 	h.Nodes = make(map[int]*Node)
 	// Recreate nodes from the serialized data.
 	for id, sn := range si.Nodes {
