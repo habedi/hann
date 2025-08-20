@@ -90,3 +90,4 @@ template-go-project
 # Ignore the directories where the data for the examples is stored
 example/data/nearest-neighbors-datasets
 example/data/nearest-neighbors-datasets-large
+*_output.txt

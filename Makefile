@@ -10,6 +10,7 @@ HF_DATASET := "nearest-neighbors-datasets"
 HANN_SEED := 33
 HANN_LOG := 1
 HANN_BENCH_NTRD := 6
+REMOVABLE_FILES_AND_DIRS := *_prof *.pb.gz *.prof
 
 # List of packages to test (excluding example/cmd)
 PACKAGES := $(shell $(GO) list ./... | grep -v $(EXAMPLES_DIR))
@@ -56,7 +57,7 @@ clean: ## Remove build artifacts and temporary files
 	@$(GO) clean -cache -testcache -modcache
 	@find . -type f -name '*.got.*' -delete
 	@find . -type f -name '*.out' -delete
-	@rm -f $(COVER_PROFILE)
+	@rm -f $(COVER_PROFILE) $(REMOVABLE_FILES_AND_DIRS)
 
 .PHONY: install-snap
 install-snap: ## Install Snap (for Debian-based systems)
