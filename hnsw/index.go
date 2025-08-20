@@ -82,11 +82,12 @@ type Node struct {
 
 // HNSWIndex is the main structure for the HNSW graph index.
 type HNSWIndex struct {
-	Mu               sync.RWMutex      `gob:"-"` // mutex to control concurrent access
-	Dimension        int               // dimension of the vectors
-	EntryPoint       *Node             // starting point for searches
-	MaxLevel         int               // current maximum level in the graph
-	Nodes            map[int]*Node     // map of node id to Node pointer
+	Mu               sync.RWMutex  `gob:"-"` // mutex to control concurrent access
+	Dimension        int           // dimension of the vectors
+	EntryPoint       *Node         // starting point for searches
+	MaxLevel         int           // current maximum level in the graph
+	Nodes            map[int]*Node // map of node id to Node pointer
+	nodesByLevel     map[int]map[int]struct{}
 	M                int               // maximum number of neighbors per node
 	Ef               int               // search parameter controlling search depth
 	Distance         core.DistanceFunc // function to calculate distance between vectors
@@ -101,6 +102,7 @@ func NewHNSW(dimension int, M int, ef int, distance core.DistanceFunc, distanceN
 	return &HNSWIndex{
 		Dimension:    dimension,
 		Nodes:        make(map[int]*Node),
+		nodesByLevel: make(map[int]map[int]struct{}),
 		MaxLevel:     -1,
 		M:            M,
 		Ef:           ef,
@@ -459,6 +461,10 @@ func (h *HNSWIndex) Add(id int, vector []float32) error {
 		ReverseLinks: make(map[int][]*Node),
 	}
 	h.Nodes[id] = newNode
+	if _, ok := h.nodesByLevel[level]; !ok {
+		h.nodesByLevel[level] = make(map[int]struct{})
+	}
+	h.nodesByLevel[level][id] = struct{}{}
 	h.insertNode(newNode, h.Ef)
 	return nil
 }
@@ -473,12 +479,30 @@ func (h *HNSWIndex) Delete(id int) error {
 	}
 	h.removeNodeLinks(node)
 	delete(h.Nodes, id)
+	level := node.Level
+	if _, ok := h.nodesByLevel[level]; ok {
+		delete(h.nodesByLevel[level], id)
+		if len(h.nodesByLevel[level]) == 0 {
+			delete(h.nodesByLevel, level)
+		}
+	}
 	// Update the entry point if necessary.
 	if h.EntryPoint != nil && h.EntryPoint.ID == id {
 		h.EntryPoint = nil
-		for _, n := range h.Nodes {
-			if h.EntryPoint == nil || n.Level > h.EntryPoint.Level {
-				h.EntryPoint = n
+		// Find the new max level efficiently
+		newMaxLevel := -1
+		for l := range h.nodesByLevel {
+			if l > newMaxLevel {
+				newMaxLevel = l
+			}
+		}
+		h.MaxLevel = newMaxLevel
+
+		if h.MaxLevel != -1 {
+			// Pick any node from the highest level
+			for newEntryPointID := range h.nodesByLevel[h.MaxLevel] {
+				h.EntryPoint = h.Nodes[newEntryPointID]
+				break
 			}
 		}
 	}
