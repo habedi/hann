@@ -90,30 +90,36 @@ func NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters int) *
 }
 
 // nearestCentroid finds the closest coarse centroid to the vector and returns its index and distance.
-func (pq *PQIVFIndex) nearestCentroid(vector []float32) (int, float64) {
+func (pq *PQIVFIndex) nearestCentroid(vector []float32) (int, float64, error) {
 	best := -1
 	bestDist := math.MaxFloat64
 	for i, centroid := range pq.coarseCentroids {
-		d := pq.Distance(vector, centroid)
+		d, err := pq.Distance(vector, centroid)
+		if err != nil {
+			return 0, 0, err
+		}
 		if d < bestDist {
 			bestDist = d
 			best = i
 		}
 	}
-	return best, bestDist
+	return best, bestDist, nil
 }
 
 // nearestCentroids returns a sorted slice of clusters with their distances to the vector.
-func (pq *PQIVFIndex) nearestCentroids(vector []float32) []struct {
+func (pq *PQIVFIndex) nearestCentroids(vector []float32) ([]struct {
 	cluster int
 	dist    float64
-} {
+}, error) {
 	res := make([]struct {
 		cluster int
 		dist    float64
 	}, 0, len(pq.coarseCentroids))
 	for i, centroid := range pq.coarseCentroids {
-		d := pq.Distance(vector, centroid)
+		d, err := pq.Distance(vector, centroid)
+		if err != nil {
+			return nil, err
+		}
 		res = append(res, struct {
 			cluster int
 			dist    float64
@@ -122,7 +128,7 @@ func (pq *PQIVFIndex) nearestCentroids(vector []float32) []struct {
 	sort.Slice(res, func(i, j int) bool {
 		return res[i].dist < res[j].dist
 	})
-	return res
+	return res, nil
 }
 
 // Add inserts a new vector with an id into the temporary holding area.
@@ -361,7 +367,10 @@ func (pq *PQIVFIndex) Train() error {
 	pq.idToCluster = make(map[int]int)
 	pq.clusterCounts = make(map[int]int)
 	for id, vector := range allVectorsByID {
-		cluster, _ := pq.nearestCentroid(vector)
+		cluster, _, err := pq.nearestCentroid(vector)
+		if err != nil {
+			return err
+		}
 		pq.idToCluster[id] = cluster
 		pq.clusterCounts[cluster]++
 		entry := pqEntry{ID: id, Vector: vector, Cluster: cluster}
@@ -438,7 +447,10 @@ func (pq *PQIVFIndex) encodeVector(vector []float32, cluster int) ([]int, error)
 		best := -1
 		bestDist := math.MaxFloat64
 		for j, cent := range pq.codebooks[i] {
-			d := core.Euclidean(sub, cent)
+			d, err := core.Euclidean(sub, cent)
+			if err != nil {
+				return nil, err
+			}
 			if d < bestDist {
 				bestDist = d
 				best = j
@@ -530,7 +542,10 @@ func runKMeans(data [][]float32, k int, iterations int) ([][]float32, error) {
 			best := -1
 			bestDist := math.MaxFloat64
 			for i, cent := range centroids {
-				d := core.Euclidean(point, cent)
+				d, err := core.Euclidean(point, cent)
+				if err != nil {
+					return nil, err
+				}
 				if d < bestDist {
 					bestDist = d
 					best = i
@@ -586,7 +601,10 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	}
 
 	// Get nearest coarse centroids as candidate clusters.
-	centCandidates := pq.nearestCentroids(query)
+	centCandidates, err := pq.nearestCentroids(query)
+	if err != nil {
+		return nil, err
+	}
 	numCandidates := pq.numCandidateClusters
 	if numCandidates > len(centCandidates) {
 		numCandidates = len(centCandidates)
@@ -618,21 +636,25 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	// Compute distances for each candidate entry.
 	for _, entry := range entries {
 		var d float64
+		var err error
 		// If PQ codebooks exist, use PQ reconstruction for approximate distance.
 		if pq.codebooks != nil && len(entry.Codes) == pq.numSubquantizers {
 			approxResidual, err := pq.decodePQCode(entry.Codes)
 			if err != nil {
-				d = pq.Distance(query, entry.Vector)
+				d, err = pq.Distance(query, entry.Vector)
 			} else {
 				approxVec, err := vectorAdd(pq.coarseCentroids[entry.Cluster], approxResidual)
 				if err != nil {
-					d = pq.Distance(query, entry.Vector)
+					d, err = pq.Distance(query, entry.Vector)
 				} else {
-					d = pq.Distance(query, approxVec)
+					d, err = pq.Distance(query, approxVec)
 				}
 			}
 		} else {
-			d = pq.Distance(query, entry.Vector)
+			d, err = pq.Distance(query, entry.Vector)
+		}
+		if err != nil {
+			return nil, err
 		}
 		results = append(results, core.Neighbor{ID: entry.ID, Distance: d})
 	}

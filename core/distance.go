@@ -7,6 +7,7 @@ package core
 */
 import "C"
 import (
+	"errors"
 	"unsafe"
 )
 
@@ -22,69 +23,73 @@ var Distances = map[string]DistanceFunc{
 // DistanceFunc computes the distance between two vectors.
 // a: the first vector.
 // b: the second vector.
-// Returns the computed distance as a float64.
-type DistanceFunc func(a, b []float32) float64
+// Returns the computed distance as a float64 and an error if validation fails.
+type DistanceFunc func(a, b []float32) (float64, error)
 
 // Euclidean computes the Euclidean (L2) distance between two vectors.
-func Euclidean(a, b []float32) float64 {
-	if len(a) == 0 || len(b) == 0 {
-		panic("vectors must not be empty")
-	}
+func Euclidean(a, b []float32) (float64, error) {
 	if len(a) != len(b) {
-		panic("vectors must have the same length")
+		return 0, errors.New("vectors must have the same length")
+	}
+	if len(a) == 0 {
+		return 0, nil
 	}
 	n := C.size_t(len(a))
-	return float64(C.simd_euclidean(
+	dist := float64(C.simd_euclidean(
 		(*C.float)(unsafe.Pointer(&a[0])),
 		(*C.float)(unsafe.Pointer(&b[0])),
 		n,
 	))
+	return dist, nil
 }
 
 // SquaredEuclidean computes the squared Euclidean distance between two vectors.
-func SquaredEuclidean(a, b []float32) float64 {
-	if len(a) == 0 || len(b) == 0 {
-		panic("vectors must not be empty")
-	}
+func SquaredEuclidean(a, b []float32) (float64, error) {
 	if len(a) != len(b) {
-		panic("vectors must have the same length")
+		return 0, errors.New("vectors must have the same length")
+	}
+	if len(a) == 0 {
+		return 0, nil
 	}
 	n := C.size_t(len(a))
-	return float64(C.simd_squared_euclidean(
+	dist := float64(C.simd_squared_euclidean(
 		(*C.float)(unsafe.Pointer(&a[0])),
 		(*C.float)(unsafe.Pointer(&b[0])),
 		n,
 	))
+	return dist, nil
 }
 
 // Manhattan computes the Manhattan (L1) distance between two vectors.
-func Manhattan(a, b []float32) float64 {
-	if len(a) == 0 || len(b) == 0 {
-		panic("vectors must not be empty")
-	}
+func Manhattan(a, b []float32) (float64, error) {
 	if len(a) != len(b) {
-		panic("vectors must have the same length")
+		return 0, errors.New("vectors must have the same length")
+	}
+	if len(a) == 0 {
+		return 0, nil
 	}
 	n := C.size_t(len(a))
-	return float64(C.simd_manhattan(
+	dist := float64(C.simd_manhattan(
 		(*C.float)(unsafe.Pointer(&a[0])),
 		(*C.float)(unsafe.Pointer(&b[0])),
 		n,
 	))
+	return dist, nil
 }
 
 // CosineDistance computes the cosine distance between two vectors.
-func CosineDistance(a, b []float32) float64 {
-	if len(a) == 0 || len(b) == 0 {
-		panic("vectors must not be empty")
-	}
+func CosineDistance(a, b []float32) (float64, error) {
 	if len(a) != len(b) {
-		panic("vectors must have the same length")
+		return 0, errors.New("vectors must have the same length")
+	}
+	if len(a) == 0 {
+		return 0, nil
 	}
 	n := C.size_t(len(a))
-	return float64(C.simd_cosine_distance(
+	dist := float64(C.simd_cosine_distance(
 		(*C.float)(unsafe.Pointer(&a[0])),
 		(*C.float)(unsafe.Pointer(&b[0])),
 		n,
 	))
+	return dist, nil
 }

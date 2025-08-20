@@ -289,10 +289,11 @@ func unionInts(a, b []int) []int {
 
 // computeDistances calculates the distance from the query to each point id in the list.
 // It does this in parallel across available CPUs.
-func (r *RPTIndex) computeDistances(query []float32, ids []int) []core.Neighbor {
+func (r *RPTIndex) computeDistances(query []float32, ids []int) ([]core.Neighbor, error) {
 	neighbors := make([]core.Neighbor, len(ids))
 	numWorkers := runtime.NumCPU()
 	chunkSize := (len(ids) + numWorkers - 1) / numWorkers
+	errsCh := make(chan error, numWorkers)
 
 	var wg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
@@ -310,13 +311,25 @@ func (r *RPTIndex) computeDistances(query []float32, ids []int) []core.Neighbor 
 			for j := start; j < end; j++ {
 				id := ids[j]
 				vec := r.points[id]
-				d := r.Distance(query, vec)
+				d, err := r.Distance(query, vec)
+				if err != nil {
+					errsCh <- err
+					return
+				}
 				neighbors[j] = core.Neighbor{ID: id, Distance: d}
 			}
 		}(start, end)
 	}
 	wg.Wait()
-	return neighbors
+	close(errsCh)
+
+	for err := range errsCh {
+		if err != nil {
+			return nil, err // Return the first error encountered
+		}
+	}
+
+	return neighbors, nil
 }
 
 // Search returns the k nearest neighbors to the query vector.
@@ -357,7 +370,10 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	r.mu.RUnlock()
 
 	// Compute distances for candidate points.
-	neighbors := r.computeDistances(query, candidateIDs)
+	neighbors, err := r.computeDistances(query, candidateIDs)
+	if err != nil {
+		return nil, err
+	}
 	// If still not enough, add extra points.
 	if len(neighbors) < k {
 		if !r.AllowBruteForceFallback {
@@ -383,7 +399,10 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 			}
 		}
 		r.mu.RUnlock()
-		extraNeighbors := r.computeDistances(query, missingIDs)
+		extraNeighbors, err := r.computeDistances(query, missingIDs)
+		if err != nil {
+			return nil, err
+		}
 		neighbors = append(neighbors, extraNeighbors...)
 	}
 	// Sort by distance.
