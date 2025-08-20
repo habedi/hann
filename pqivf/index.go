@@ -603,7 +603,7 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	// Get nearest coarse centroids as candidate clusters.
 	centCandidates, err := pq.nearestCentroids(query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to find nearest centroids: %w", err)
 	}
 	numCandidates := pq.numCandidateClusters
 	if numCandidates > len(centCandidates) {
@@ -636,26 +636,34 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	// Compute distances for each candidate entry.
 	for _, entry := range entries {
 		var d float64
-		var err error
-		// If PQ codebooks exist, use PQ reconstruction for approximate distance.
+		var distErr error
+
 		if pq.codebooks != nil && len(entry.Codes) == pq.numSubquantizers {
 			approxResidual, err := pq.decodePQCode(entry.Codes)
 			if err != nil {
-				d, err = pq.Distance(query, entry.Vector)
+				// Fallback to exact distance if decoding fails
+				d, distErr = pq.Distance(query, entry.Vector)
 			} else {
 				approxVec, err := vectorAdd(pq.coarseCentroids[entry.Cluster], approxResidual)
 				if err != nil {
-					d, err = pq.Distance(query, entry.Vector)
+					// Fallback to exact distance if vector addition fails
+					d, distErr = pq.Distance(query, entry.Vector)
 				} else {
-					d, err = pq.Distance(query, approxVec)
+					// Main path: use approximate distance
+					d, distErr = pq.Distance(query, approxVec)
 				}
 			}
 		} else {
-			d, err = pq.Distance(query, entry.Vector)
+			// Path for entries without PQ codes or when index is not fully trained
+			d, distErr = pq.Distance(query, entry.Vector)
 		}
-		if err != nil {
-			return nil, err
+
+		// Central point for handling any distance calculation error for this entry
+		if distErr != nil {
+			log.Warn().Err(distErr).Msgf("Failed to compute distance for vector ID %d, skipping candidate", entry.ID)
+			continue // Skip this candidate
 		}
+
 		results = append(results, core.Neighbor{ID: entry.ID, Distance: d})
 	}
 	sort.Slice(results, func(i, j int) bool {

@@ -6,7 +6,11 @@ package core
 #include "simd_ops.h"
 */
 import "C"
-import "unsafe"
+import (
+	"runtime"
+	"sync"
+	"unsafe"
+)
 
 // NormalizeVector normalizes a single float32 slice using AVX instructions.
 func NormalizeVector(vec []float32) {
@@ -16,27 +20,35 @@ func NormalizeVector(vec []float32) {
 	C.simd_normalize((*C.float)(unsafe.Pointer(&vec[0])), C.size_t(len(vec)))
 }
 
-// NormalizeBatch normalizes multiple vectors in parallel using goroutines.
+// NormalizeBatch normalizes multiple vectors in parallel using a worker pool.
 func NormalizeBatch(vecs [][]float32) {
 	if len(vecs) == 0 {
 		return
 	}
 
-	// Make a channel to synchronize the goroutines.
-	done := make(chan struct{})
-	for i := range vecs {
-		go func(i int) {
-			if len(vecs[i]) > 0 {
-				C.simd_normalize((*C.float)(unsafe.Pointer(&vecs[i][0])), C.size_t(len(vecs[i])))
+	numWorkers := runtime.NumCPU()
+	tasks := make(chan int, len(vecs))
+	var wg sync.WaitGroup
+
+	// Start workers
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range tasks {
+				if len(vecs[idx]) > 0 {
+					C.simd_normalize((*C.float)(unsafe.Pointer(&vecs[idx][0])), C.size_t(len(vecs[idx])))
+				}
 			}
-			done <- struct{}{}
-		}(i)
+		}()
 	}
 
-	// Wait for all goroutines to finish.
-	for range vecs {
-		<-done
+	// Feed tasks
+	for i := range vecs {
+		tasks <- i
 	}
+	close(tasks)
 
-	close(done)
+	// Wait for all workers to finish
+	wg.Wait()
 }
