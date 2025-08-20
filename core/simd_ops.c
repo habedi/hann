@@ -30,8 +30,9 @@ static inline float horizontal_sum256(__m256 v) {
  */
 void avx_normalize(float *vec, size_t len) {
     __m256 sum = _mm256_setzero_ps();
-    size_t i;
-    for (i = 0; i <= len - 8; i += 8) {
+    size_t i = 0;
+    size_t limit = len - (len % 8);
+    for (; i < limit; i += 8) {
         __m256 v = _mm256_loadu_ps(&vec[i]);
 #ifdef __FMA__
         sum = _mm256_fmadd_ps(v, v, sum);
@@ -46,7 +47,8 @@ void avx_normalize(float *vec, size_t len) {
     float norm = sqrtf(total);
     if (norm == 0.0f) return;
     __m256 norm_vec = _mm256_set1_ps(norm);
-    for (i = 0; i <= len - 8; i += 8) {
+    i = 0;
+    for (; i < limit; i += 8) {
         __m256 v = _mm256_loadu_ps(&vec[i]);
         v = _mm256_div_ps(v, norm_vec);
         _mm256_storeu_ps(&vec[i], v);
