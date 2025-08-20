@@ -194,6 +194,7 @@ func TestPQIVF_TrainAndSearch(t *testing.T) {
 	vectors := map[int][]float32{
 		1: {1, 2, 3, 4, 5, 6},
 		2: {6, 5, 4, 3, 2, 1},
+		3: {1, 1, 1, 1, 1, 1},
 	}
 	if err := idx.BulkAdd(vectors); err != nil {
 		t.Fatalf("BulkAdd failed: %v", err)
