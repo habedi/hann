@@ -150,7 +150,7 @@ The index has the following configurable parameters:
   compression and accuracy at the cost of increased indexing time (typical range: 4–16).
 - **pqK**: Sets the number of codewords per subquantizer. Higher values increase accuracy and storage usage (typical
   value: 256).
-- **kMeansIters**: Number of iterations used to train the product quantization codebooks (recommended value: 15).
+- **kMeansIters**: Number of iterations used to train the product quantization codebooks (recommended value: 25).
 
 #### RPT Index
 
