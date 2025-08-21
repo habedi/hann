@@ -33,7 +33,7 @@ It can be used to add fast in-memory similarity search capabilities to your Go a
 
 - Unified interface for different indexes (see [core/index.go](core/index.go))
 - Support for indexing and searching vectors of arbitrary dimension
-- Fast distance computation using SIMD (AVX) instructions (see [core/simd_distance.c](core/simd_distance.c))
+- Fast distance computation using SIMD (AVX/AVX2) instructions (see [core/simd_distance.c](core/simd_distance.c))
 - Support for bulk insertion, deletion, and updates
 - Support for saving indexes to disk and loading them back
 
@@ -150,7 +150,7 @@ The index has the following configurable parameters:
   compression and accuracy at the cost of increased indexing time (typical range: 4–16).
 - **pqK**: Sets the number of codewords per subquantizer. Higher values increase accuracy and storage usage (typical
   value: 256).
-- **kMeansIters**: Number of iterations used to train the product quantization codebooks (recommended value: 25).
+- **kMeansIters**: Number of iterations used to train the product quantization codebooks (recommended value: 15).
 
 #### RPT Index
 
