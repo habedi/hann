@@ -1,12 +1,7 @@
 [project]
 name = "hann"
 version = "0.1.0"
-description = "Python environment for Hann"
-readme = "README.md"
-license = { text = "MIT" }
-authors = [
-    { name = "Hassan Abedi", email = "hassan.abedi.t@gmail.com" }
-]
+description = "The Python environment for the Hann project"
 
 requires-python = ">=3.10,<4.0"
 dependencies = [
