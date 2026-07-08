@@ -1,38 +1,27 @@
-# EditorConfig is awesome: https://EditorConfig.org
+# https://EditorConfig.org
 
-# Top-most EditorConfig file
 root = true
 
-# Global settings (applicable to all files unless overridden)
 [*]
-charset = utf-8 # Default character encoding
-end_of_line = lf # Use LF for line endings (Unix-style)
-indent_style = space # Use spaces for indentation
-indent_size = 4 # Default indentation size
-insert_final_newline = true # Make sure files end with a newline
-trim_trailing_whitespace = true # Remove trailing whitespace
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
 
-# Go files
 [*.go]
 max_line_length = 100
 
-# Markdown files
 [*.md]
-max_line_length = 120
-trim_trailing_whitespace = false # Don't remove trailing whitespace in Markdown files
+max_line_length = 150
+trim_trailing_whitespace = false
 
-# Bash scripts
-[*.sh]
+[*.{yml,yaml,json}]
 indent_size = 2
 
-# YAML files
-[*.{yml,yaml}]
+[*.{c,h,sh}]
 indent_size = 2
 
-# C files
-[*.{c,h}]
-indent_size = 2
-
-# Python files
 [*.py]
 max_line_length = 100
