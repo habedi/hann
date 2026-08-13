@@ -81,6 +81,8 @@ coverage.html
 *.log
 template-go-project
 *.gob
+# The golden index fixtures under testdata pin the on-disk format and must be tracked
+!**/testdata/*.gob
 *.bin
 *.index
 *.pb.gz
