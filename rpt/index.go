@@ -13,7 +13,6 @@ import (
 
 	"github.com/habedi/hann/core"
 	"github.com/rs/zerolog/log"
-	"github.com/schollz/progressbar/v3"
 )
 
 // NewRPTIndex creates a new RPT (Random Projection Tree) index.
@@ -413,7 +412,7 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 			}
 			return neighbors[:k], nil
 		}
-		log.Warn().Msgf("Search for k=%d yielded only %d candidates. Falling back to brute-force scan.", k, len(neighbors))
+		log.Debug().Msgf("Search for k=%d yielded only %d candidates. Falling back to brute-force scan.", k, len(neighbors))
 		candidateSet := make(map[int]struct{}, len(candidateIDs))
 		for _, id := range candidateIDs {
 			candidateSet[id] = struct{}{}
@@ -462,10 +461,6 @@ func (r *RPTIndex) BulkAdd(vectors map[int][]float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Create a progress bar with a newline on completion.
-	bar := progressbar.NewOptions(len(vectors),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
 	for id, vector := range vectors {
 		if len(vector) != r.dimension {
 			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
@@ -475,10 +470,6 @@ func (r *RPTIndex) BulkAdd(vectors map[int][]float32) error {
 			return fmt.Errorf("id %d already exists", id)
 		}
 		r.points[id] = vector
-		err := bar.Add(1)
-		if err != nil {
-			return err
-		}
 	}
 	r.dirty = true
 	return nil
@@ -501,16 +492,8 @@ func (r *RPTIndex) BulkDelete(ids []int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Create a progress bar with a newline on completion.
-	bar := progressbar.NewOptions(len(ids),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
 	for _, id := range ids {
 		delete(r.points, id)
-		err := bar.Add(1)
-		if err != nil {
-			return err
-		}
 	}
 	r.dirty = true
 	return nil
@@ -537,10 +520,6 @@ func (r *RPTIndex) BulkUpdate(updates map[int][]float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Create a progress bar with a newline on completion.
-	bar := progressbar.NewOptions(len(updates),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
 	for id, vector := range updates {
 		if len(vector) != r.dimension {
 			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
@@ -550,10 +529,6 @@ func (r *RPTIndex) BulkUpdate(updates map[int][]float32) error {
 			return fmt.Errorf("id %d not found", id)
 		}
 		r.points[id] = vector
-		err := bar.Add(1)
-		if err != nil {
-			return err
-		}
 	}
 	r.dirty = true
 	return nil
@@ -581,7 +556,13 @@ type rptSerialized struct {
 	ParallelThreshold       int
 	ProbeMargin             float64
 	AllowBruteForceFallback bool
+	FormatVersion           int
 }
+
+// formatVersion is the on-disk format version written by GobEncode. Files
+// written before the field existed decode it as zero and are accepted; files
+// written by a newer version of the format are rejected on load.
+const formatVersion = 1
 
 // GobEncode serializes the index to bytes using gob.
 func (r *RPTIndex) GobEncode() ([]byte, error) {
@@ -596,6 +577,7 @@ func (r *RPTIndex) GobEncode() ([]byte, error) {
 		ParallelThreshold:       r.ParallelThreshold,
 		ProbeMargin:             r.ProbeMargin,
 		AllowBruteForceFallback: r.AllowBruteForceFallback,
+		FormatVersion:           formatVersion,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -612,6 +594,10 @@ func (r *RPTIndex) GobDecode(data []byte) error {
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&ser); err != nil {
 		return err
+	}
+	if ser.FormatVersion > formatVersion {
+		return fmt.Errorf("index file has format version %d, but this build supports up to %d",
+			ser.FormatVersion, formatVersion)
 	}
 	r.dimension = ser.Dimension
 	r.points = ser.Points
