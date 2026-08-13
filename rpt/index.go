@@ -305,6 +305,16 @@ func unionInts(a, b []int) []int {
 // computeDistances calculates the distance from the query to each point id in the list.
 // It does this in parallel across available CPUs.
 func (r *RPTIndex) computeDistances(query []float32, ids []int) ([]core.Neighbor, error) {
+	// The tree can reference deleted ids when a delete lands between a tree
+	// rebuild and the moment the search reacquires the read lock, so drop ids
+	// that are no longer in the point map.
+	present := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := r.points[id]; ok {
+			present = append(present, id)
+		}
+	}
+	ids = present
 	neighbors := make([]core.Neighbor, len(ids))
 	numWorkers := runtime.NumCPU()
 	chunkSize := (len(ids) + numWorkers - 1) / numWorkers
