@@ -18,6 +18,9 @@ import (
 
 // NewRPTIndex creates a new RPT (Random Projection Tree) index.
 // It initializes parameters like dimension, leaf capacity, candidate projections, parallel threshold, and probe margin.
+// It panics if leafCapacity or candidateProjections is not positive, because a
+// non-positive leaf capacity makes tree building recurse forever, and a
+// non-positive number of candidate projections leaves a split with no candidate.
 func NewRPTIndex(
 	dimension int,
 	leafCapacity int,
@@ -25,6 +28,12 @@ func NewRPTIndex(
 	parallelThreshold int,
 	probeMargin float64,
 ) *RPTIndex {
+	if leafCapacity <= 0 {
+		panic(fmt.Sprintf("leafCapacity (%d) must be positive", leafCapacity))
+	}
+	if candidateProjections <= 0 {
+		panic(fmt.Sprintf("candidateProjections (%d) must be positive", candidateProjections))
+	}
 	return &RPTIndex{
 		dimension:               dimension,
 		points:                  make(map[int][]float32),
@@ -232,12 +241,14 @@ func (r *RPTIndex) buildTree() {
 	for id := range r.points {
 		ids = append(ids, id)
 	}
-	// Shuffle the ids to avoid bias.
-	rand.Shuffle(len(ids), func(i, j int) {
-		ids[i], ids[j] = ids[j], ids[i]
-	})
 	// Use a new random source for building the tree.
 	localRand := rand.New(rand.NewSource(core.GetSeed()))
+	// Sort the ids to remove the map iteration order, then shuffle them with
+	// the seeded generator, so a run with HANN_SEED set builds the same tree.
+	sort.Ints(ids)
+	localRand.Shuffle(len(ids), func(i, j int) {
+		ids[i], ids[j] = ids[j], ids[i]
+	})
 	r.tree = buildTreeRecursive(ids, r.points, r.dimension, r.Distance, localRand, r.LeafCapacity,
 		r.CandidateProjections, r.ParallelThreshold)
 	r.dirty = false // tree is now up to date
@@ -263,7 +274,12 @@ func searchTreeMultiProbeWithMargin(node *treeNode, query []float32, dimension i
 	if math.Abs(dot-node.threshold) < margin {
 		leftIDs := searchTreeMultiProbeWithMargin(node.left, query, dimension, distance, margin)
 		rightIDs := searchTreeMultiProbeWithMargin(node.right, query, dimension, distance, margin)
-		return append(leftIDs, rightIDs...)
+		// Merge into a fresh slice; appending to leftIDs could write into the
+		// backing array of a leaf, which is shared between concurrent searches.
+		merged := make([]int, 0, len(leftIDs)+len(rightIDs))
+		merged = append(merged, leftIDs...)
+		merged = append(merged, rightIDs...)
+		return merged
 	} else if dot < node.threshold {
 		return searchTreeMultiProbeWithMargin(node.left, query, dimension, distance, margin)
 	}
@@ -335,17 +351,15 @@ func (r *RPTIndex) computeDistances(query []float32, ids []int) ([]core.Neighbor
 // It rebuilds the tree if needed and uses multi-probe search to get candidate ids.
 func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if k <= 0 {
-		r.mu.RUnlock()
 		return nil, fmt.Errorf("k must be positive")
 	}
 	if len(query) != r.dimension {
-		r.mu.RUnlock()
 		return nil, fmt.Errorf("query dimension %d does not match index dimension %d",
 			len(query), r.dimension)
 	}
 	if len(r.points) == 0 {
-		r.mu.RUnlock()
 		return nil, nil // Return empty slice for empty index
 	}
 	// Copy the query to avoid modifying the original.
@@ -370,9 +384,9 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 		candidateIDsAlt := searchTreeMultiProbeWithMargin(r.tree, query, r.dimension, r.Distance, r.ProbeMargin*2)
 		candidateIDs = unionInts(candidateIDs, candidateIDsAlt)
 	}
-	r.mu.RUnlock()
 
-	// Compute distances for candidate points.
+	// Compute distances for candidate points. The read lock stays held so the
+	// workers can read the point map while other goroutines mutate the index.
 	neighbors, err := r.computeDistances(query, candidateIDs)
 	if err != nil {
 		return nil, err
@@ -390,7 +404,6 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 			return neighbors[:k], nil
 		}
 		log.Warn().Msgf("Search for k=%d yielded only %d candidates. Falling back to brute-force scan.", k, len(neighbors))
-		r.mu.RLock()
 		candidateSet := make(map[int]struct{}, len(candidateIDs))
 		for _, id := range candidateIDs {
 			candidateSet[id] = struct{}{}
@@ -401,7 +414,6 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 				missingIDs = append(missingIDs, id)
 			}
 		}
-		r.mu.RUnlock()
 		extraNeighbors, err := r.computeDistances(query, missingIDs)
 		if err != nil {
 			return nil, err
@@ -545,7 +557,7 @@ func (r *RPTIndex) Stats() core.IndexStats {
 	return core.IndexStats{
 		Count:     count,
 		Dimension: r.dimension,
-		Distance:  "euclidean",
+		Distance:  r.DistanceName,
 	}
 }
 
@@ -568,7 +580,7 @@ func (r *RPTIndex) GobEncode() ([]byte, error) {
 	ser := rptSerialized{
 		Dimension:               r.dimension,
 		Points:                  r.points,
-		DistanceName:            "euclidean",
+		DistanceName:            r.DistanceName,
 		LeafCapacity:            r.LeafCapacity,
 		CandidateProjections:    r.CandidateProjections,
 		ParallelThreshold:       r.ParallelThreshold,
@@ -593,7 +605,14 @@ func (r *RPTIndex) GobDecode(data []byte) error {
 	}
 	r.dimension = ser.Dimension
 	r.points = ser.Points
-	r.DistanceName = "euclidean"
+	r.DistanceName = ser.DistanceName
+	// Restore the distance function from its name. An unknown name keeps an
+	// already configured function, and is an error when there is none to keep.
+	if fn, ok := core.Distances[ser.DistanceName]; ok {
+		r.Distance = fn
+	} else if r.Distance == nil {
+		return fmt.Errorf("unknown distance name %q in serialized index", ser.DistanceName)
+	}
 	r.LeafCapacity = ser.LeafCapacity
 	r.CandidateProjections = ser.CandidateProjections
 	r.ParallelThreshold = ser.ParallelThreshold
@@ -604,9 +623,9 @@ func (r *RPTIndex) GobDecode(data []byte) error {
 }
 
 // Save writes the index to the given writer using gob encoding.
+// GobEncode takes the read lock, so Save must not take it as well; a writer
+// queued between the two acquisitions would deadlock the index.
 func (r *RPTIndex) Save(w io.Writer) error {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	enc := gob.NewEncoder(w)
 	return enc.Encode(r)
 }

@@ -2,9 +2,12 @@ package rpt_test
 
 import (
 	"bytes"
+	"math/rand"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/rpt"
 )
 
@@ -299,4 +302,278 @@ func TestRPTIndex_EdgeCases(t *testing.T) {
 	if err := newEmptyIdx.Load(bytes.NewReader(buf.Bytes())); err != nil {
 		t.Fatalf("Load on empty index failed: %v", err)
 	}
+}
+
+// makeVector returns a deterministic vector for the given id and dimension.
+func makeVector(rnd *rand.Rand, dim int) []float32 {
+	vec := make([]float32, dim)
+	for i := range vec {
+		vec[i] = rnd.Float32()*2 - 1
+	}
+	return vec
+}
+
+// TestRPTIndex_ConcurrentSearchWithWrites checks that Search does not read the
+// point map without holding the lock while other goroutines mutate the index.
+// Run with the race detector to catch unlocked map access.
+func TestRPTIndex_ConcurrentSearchWithWrites(t *testing.T) {
+	dim := 8
+	idx := rpt.NewRPTIndex(dim, 5, 2, 1<<30, 0.1)
+	rnd := rand.New(rand.NewSource(1))
+	for i := 0; i < 500; i++ {
+		if err := idx.Add(i, makeVector(rnd, dim)); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+	query := makeVector(rnd, dim)
+	if _, err := idx.Search(query, 5); err != nil {
+		t.Fatalf("warm-up Search failed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				if _, err := idx.Search(query, 5); err != nil {
+					t.Errorf("Search failed during concurrent writes: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	for w := 0; w < 2; w++ {
+		wg.Add(1)
+		go func(offset int) {
+			defer wg.Done()
+			localRnd := rand.New(rand.NewSource(int64(offset)))
+			for i := 0; i < 100; i++ {
+				id := offset*250 + i
+				if err := idx.Delete(id); err != nil {
+					t.Errorf("Delete failed: %v", err)
+					return
+				}
+				if err := idx.Add(id, makeVector(localRnd, dim)); err != nil {
+					t.Errorf("Add failed: %v", err)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+}
+
+// TestRPTIndex_SaveWithConcurrentWriters checks that Save does not deadlock
+// when writers contend for the lock while a save is in progress.
+func TestRPTIndex_SaveWithConcurrentWriters(t *testing.T) {
+	dim := 8
+	idx := rpt.NewRPTIndex(dim, 5, 2, 1<<30, 0.1)
+	rnd := rand.New(rand.NewSource(2))
+	for i := 0; i < 100; i++ {
+		if err := idx.Add(i, makeVector(rnd, dim)); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for w := 0; w < 4; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < 200; i++ {
+					var buf bytes.Buffer
+					if err := idx.Save(&buf); err != nil {
+						t.Errorf("Save failed: %v", err)
+						return
+					}
+				}
+			}()
+		}
+		for w := 0; w < 4; w++ {
+			wg.Add(1)
+			go func(offset int) {
+				defer wg.Done()
+				localRnd := rand.New(rand.NewSource(int64(offset)))
+				for i := 0; i < 200; i++ {
+					id := 10000 + offset*1000 + i
+					if err := idx.Add(id, makeVector(localRnd, dim)); err != nil {
+						t.Errorf("Add failed: %v", err)
+						return
+					}
+					if err := idx.Delete(id); err != nil {
+						t.Errorf("Delete failed: %v", err)
+						return
+					}
+				}
+			}(w)
+		}
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Save deadlocked with concurrent writers")
+	}
+}
+
+// TestRPTIndex_ConcurrentMultiProbeSearch checks that two concurrent searches
+// cannot write into the same backing array when the multi-probe branch merges
+// candidate lists from leaves. Run with the race detector.
+func TestRPTIndex_ConcurrentMultiProbeSearch(t *testing.T) {
+	dim := 8
+	// A very large probe margin makes every internal node probe both children,
+	// and a leaf capacity of 5 allows leaves whose slices have spare capacity
+	// that can hold the sibling's points.
+	idx := rpt.NewRPTIndex(dim, 5, 1, 1<<30, 1e9)
+	rnd := rand.New(rand.NewSource(3))
+	for i := 0; i < 500; i++ {
+		if err := idx.Add(i, makeVector(rnd, dim)); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+
+	// Rebuild the tree several times so that different random trees are searched.
+	for round := 0; round < 10; round++ {
+		// Mark the tree dirty so the next search rebuilds it.
+		if err := idx.Delete(0); err != nil {
+			t.Fatalf("Delete failed: %v", err)
+		}
+		if err := idx.Add(0, makeVector(rnd, dim)); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+		query := makeVector(rnd, dim)
+		if _, err := idx.Search(query, 5); err != nil {
+			t.Fatalf("warm-up Search failed: %v", err)
+		}
+
+		var wg sync.WaitGroup
+		for w := 0; w < 8; w++ {
+			wg.Add(1)
+			go func(seed int64) {
+				defer wg.Done()
+				localRnd := rand.New(rand.NewSource(seed))
+				for i := 0; i < 20; i++ {
+					q := makeVector(localRnd, dim)
+					if _, err := idx.Search(q, 5); err != nil {
+						t.Errorf("Search failed: %v", err)
+						return
+					}
+				}
+			}(int64(w))
+		}
+		wg.Wait()
+	}
+}
+
+// TestRPTIndex_SeedReproducibility checks that two indexes built from the same
+// data with the same HANN_SEED return the same search results.
+func TestRPTIndex_SeedReproducibility(t *testing.T) {
+	t.Setenv("HANN_SEED", "12345")
+	dim := 8
+	build := func() *rpt.RPTIndex {
+		idx := rpt.NewRPTIndex(dim, 5, 3, 1<<30, 0)
+		idx.AllowBruteForceFallback = false
+		rnd := rand.New(rand.NewSource(7))
+		for i := 0; i < 400; i++ {
+			if err := idx.Add(i, makeVector(rnd, dim)); err != nil {
+				t.Fatalf("Add failed: %v", err)
+			}
+		}
+		return idx
+	}
+	a := build()
+	b := build()
+
+	queryRnd := rand.New(rand.NewSource(11))
+	for q := 0; q < 20; q++ {
+		query := makeVector(queryRnd, dim)
+		na, err := a.Search(query, 5)
+		if err != nil {
+			t.Fatalf("Search on first index failed: %v", err)
+		}
+		nb, err := b.Search(query, 5)
+		if err != nil {
+			t.Fatalf("Search on second index failed: %v", err)
+		}
+		if len(na) != len(nb) {
+			t.Fatalf("query %d: result counts differ: %d vs %d", q, len(na), len(nb))
+		}
+		for i := range na {
+			if na[i].ID != nb[i].ID {
+				t.Fatalf("query %d: result %d differs: id %d vs id %d",
+					q, i, na[i].ID, nb[i].ID)
+			}
+		}
+	}
+}
+
+// TestRPTIndex_SaveLoadDistance checks that the configured distance name is
+// reported by Stats, survives a save and load round-trip, and that the
+// distance function is restored when loading into a zero-value index.
+func TestRPTIndex_SaveLoadDistance(t *testing.T) {
+	dim := 4
+	idx := rpt.NewRPTIndex(dim, 4, 2, 100, 0.1)
+	idx.Distance = core.Distances["manhattan"]
+	idx.DistanceName = "manhattan"
+	vectors := map[int][]float32{
+		1: {1, 2, 3, 4},
+		2: {4, 3, 2, 1},
+		3: {1, 1, 1, 1},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+
+	if got := idx.Stats().Distance; got != "manhattan" {
+		t.Errorf("Stats reported distance %q, want %q", got, "manhattan")
+	}
+
+	var buf bytes.Buffer
+	if err := idx.Save(&buf); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	loaded := &rpt.RPTIndex{}
+	if err := loaded.Load(bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if got := loaded.Stats().Distance; got != "manhattan" {
+		t.Errorf("Stats after load reported distance %q, want %q", got, "manhattan")
+	}
+	neighbors, err := loaded.Search([]float32{1, 2, 3, 4}, 2)
+	if err != nil {
+		t.Fatalf("Search after load failed: %v", err)
+	}
+	if len(neighbors) != 2 {
+		t.Errorf("expected 2 neighbors after load, got %d", len(neighbors))
+	}
+	if neighbors[0].ID != 1 {
+		t.Errorf("expected nearest neighbor id 1, got %d", neighbors[0].ID)
+	}
+}
+
+// TestRPTIndex_ConstructorValidation checks that the constructor rejects
+// parameter values that would break the index.
+func TestRPTIndex_ConstructorValidation(t *testing.T) {
+	t.Run("non-positive leaf capacity", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Error("expected panic for leafCapacity <= 0, but got none")
+			}
+		}()
+		rpt.NewRPTIndex(4, 0, 2, 100, 0.1)
+	})
+	t.Run("non-positive candidate projections", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Error("expected panic for candidateProjections <= 0, but got none")
+			}
+		}()
+		rpt.NewRPTIndex(4, 4, 0, 100, 0.1)
+	})
 }

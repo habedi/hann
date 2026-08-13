@@ -1,8 +1,16 @@
 #include "simd_distance.h"
-#include <immintrin.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
+
+// The AVX variants are compiled with a per-function target attribute instead
+// of a package-wide -mavx flag, so the fallback functions and the dispatch
+// code never contain AVX instructions and stay safe on CPUs without AVX.
+// hann_cpu_init still selects a variant at runtime through function pointers.
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+#include <immintrin.h>
+#define HANN_TARGET_AVX __attribute__((target("avx")))
+#endif
 
 // Function pointers for distance functions
 float (*simd_euclidean_ptr)(const float*, const float*, size_t);
@@ -57,8 +65,9 @@ float cosine_distance_fallback(const float* a, const float* b, size_t n) {
     return 1.0f - cosine_similarity;
 }
 
-#if defined(__AVX__)
+#ifdef HANN_TARGET_AVX
 // AVX implementations
+HANN_TARGET_AVX
 static inline float horizontal_sum256(__m256 v) {
     __m128 vlow = _mm256_castps256_ps128(v);
     __m128 vhigh = _mm256_extractf128_ps(v, 1);
@@ -70,6 +79,7 @@ static inline float horizontal_sum256(__m256 v) {
     return _mm_cvtss_f32(sums);
 }
 
+HANN_TARGET_AVX
 float euclidean_avx(const float* a, const float* b, size_t n) {
     __m256 sum_vec = _mm256_setzero_ps();
     size_t i = 0;
@@ -89,6 +99,7 @@ float euclidean_avx(const float* a, const float* b, size_t n) {
     return sqrtf(sum);
 }
 
+HANN_TARGET_AVX
 float squared_euclidean_avx(const float* a, const float* b, size_t n) {
     __m256 sum_vec = _mm256_setzero_ps();
     size_t i = 0;
@@ -108,6 +119,7 @@ float squared_euclidean_avx(const float* a, const float* b, size_t n) {
     return sum;
 }
 
+HANN_TARGET_AVX
 float manhattan_avx(const float* a, const float* b, size_t n) {
     __m256 sum_vec = _mm256_setzero_ps();
     __m256 sign_mask = _mm256_set1_ps(-0.0f);
@@ -127,6 +139,7 @@ float manhattan_avx(const float* a, const float* b, size_t n) {
     return sum;
 }
 
+HANN_TARGET_AVX
 float cosine_distance_avx(const float* a, const float* b, size_t n) {
     __m256 dot_vec = _mm256_setzero_ps();
     __m256 norm_a_vec = _mm256_setzero_ps();

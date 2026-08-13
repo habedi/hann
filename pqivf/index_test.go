@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/habedi/hann/pqivf"
 )
@@ -331,12 +332,167 @@ func TestPQIVF_EdgeCases(t *testing.T) {
 		t.Error("expected error searching with k=0, but got none")
 	}
 
-	// Search with k > number of items.
+	// Search with k > number of items. The failed Update above left id 1
+	// in place, so the index holds three entries.
 	neighbors, err := idx.Search(vec1, 5)
 	if err != nil {
 		t.Fatalf("Search with k > num items failed: %v", err)
 	}
-	if len(neighbors) != 2 {
-		t.Errorf("expected 2 neighbors, got %d", len(neighbors))
+	if len(neighbors) != 3 {
+		t.Errorf("expected 3 neighbors, got %d", len(neighbors))
+	}
+}
+
+func TestPQIVF_ConcurrentSaveAdd(t *testing.T) {
+	dim := 6
+	idx := pqivf.NewPQIVFIndex(dim, 3, 2, 256, 10)
+
+	makeVec := func(id int) []float32 {
+		return []float32{
+			float32(id),
+			float32(id + 1),
+			float32(id + 2),
+			float32(id + 3),
+			float32(id + 4),
+			float32(id + 5),
+		}
+	}
+	for i := 0; i < 2000; i++ {
+		if err := idx.Add(i, makeVec(i)); err != nil {
+			t.Fatalf("Add failed for id %d: %v", i, err)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for i := 0; i < 200; i++ {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				var buf bytes.Buffer
+				if err := idx.Save(&buf); err != nil {
+					t.Errorf("Save failed: %v", err)
+				}
+			}()
+			go func(id int) {
+				defer wg.Done()
+				if err := idx.Add(id, makeVec(id)); err != nil {
+					t.Errorf("Add failed for id %d: %v", id, err)
+				}
+			}(10000 + i)
+		}
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("concurrent Save and Add did not finish; the index deadlocked")
+	}
+}
+
+func TestPQIVF_ConcurrentUpdateSearch(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim := 6
+	idx := pqivf.NewPQIVFIndex(dim, 3, 2, 256, 10)
+
+	makeVec := func(id int) []float32 {
+		return []float32{
+			float32(id),
+			float32(id + 1),
+			float32(id + 2),
+			float32(id + 3),
+			float32(id + 4),
+			float32(id + 5),
+		}
+	}
+	for i := 0; i < 100; i++ {
+		if err := idx.Add(i, makeVec(i)); err != nil {
+			t.Fatalf("Add failed for id %d: %v", i, err)
+		}
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
+	query := makeVec(50)
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func(id int) {
+			defer wg.Done()
+			if err := idx.Update(id, makeVec(id+1000)); err != nil {
+				t.Errorf("Update failed for id %d: %v", id, err)
+			}
+		}(i)
+		go func() {
+			defer wg.Done()
+			// The index becomes untrained once an update lands, so an
+			// error is acceptable here. The race detector is the check.
+			_, _ = idx.Search(query, 1)
+		}()
+	}
+	wg.Wait()
+}
+
+func TestPQIVF_UpdateFailureKeepsEntry(t *testing.T) {
+	dim := 4
+	idx := pqivf.NewPQIVFIndex(dim, 2, 2, 256, 5)
+
+	if err := idx.Add(1, []float32{1, 1, 1, 1}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	// An update with a vector of the wrong dimension must fail and leave
+	// the original entry in place.
+	if err := idx.Update(1, []float32{1, 2, 3}); err == nil {
+		t.Fatal("expected error updating with a vector of the wrong dimension, but got none")
+	}
+	if stats := idx.Stats(); stats.Count != 1 {
+		t.Fatalf("expected count 1 after failed Update, got %d", stats.Count)
+	}
+
+	// The entry must still be updatable with a valid vector.
+	if err := idx.Update(1, []float32{2, 2, 2, 2}); err != nil {
+		t.Fatalf("Update with a valid vector failed: %v", err)
+	}
+}
+
+func TestPQIVF_BulkUpdateFailureKeepsEntries(t *testing.T) {
+	dim := 4
+	idx := pqivf.NewPQIVFIndex(dim, 2, 2, 256, 5)
+
+	vectors := map[int][]float32{
+		1: {1, 1, 1, 1},
+		2: {2, 2, 2, 2},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+
+	updates := map[int][]float32{
+		1: {3, 3, 3, 3},
+		2: {1, 2, 3},
+	}
+	if err := idx.BulkUpdate(updates); err == nil {
+		t.Fatal("expected error from BulkUpdate with a vector of the wrong dimension, but got none")
+	}
+	if stats := idx.Stats(); stats.Count != 2 {
+		t.Fatalf("expected count 2 after failed BulkUpdate, got %d", stats.Count)
+	}
+}
+
+func TestPQIVF_InvalidCoarseK(t *testing.T) {
+	for _, coarseK := range []int{0, -1} {
+		func() {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Errorf("expected panic for coarseK=%d, but got none", coarseK)
+				}
+			}()
+			pqivf.NewPQIVFIndex(4, coarseK, 2, 256, 5)
+		}()
 	}
 }

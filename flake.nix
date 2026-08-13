@@ -7,8 +7,8 @@
 
   outputs = { self, nixpkgs }:
     let
-      # The distance functions are compiled with -mavx and -mavx2, so the build
-      # is x86_64 only.
+      # The vectorized distance functions target AVX, and x86_64 is the only
+      # architecture the library is tested on.
       supportedSystems = [ "x86_64-linux" "x86_64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
     in
@@ -45,7 +45,7 @@
             # Keep the test runs reproducible and quiet by default. Override
             # either one in the shell to change it.
             HANN_SEED = "33";
-            HANN_LOG = "1";
+            HANN_LOG = "0";
           };
         }
       );

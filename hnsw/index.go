@@ -145,6 +145,7 @@ type serializedIndex struct {
 	MaxLevel         int                    // maximum level in the graph
 	DistanceName     string                 // name of the distance metric
 	ExhaustiveSearch bool                   // Add this field
+	HasEntryPoint    bool                   // whether EntryPoint holds a valid node id
 }
 
 // GobEncode serializes the HNSWIndex using the gob encoder.
@@ -178,6 +179,7 @@ func (h *HNSWIndex) GobEncode() ([]byte, error) {
 	}
 	if h.EntryPoint != nil {
 		si.EntryPoint = h.EntryPoint.ID
+		si.HasEntryPoint = true
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -203,6 +205,13 @@ func (h *HNSWIndex) GobDecode(data []byte) error {
 	h.MaxLevel = si.MaxLevel
 	h.DistanceName = si.DistanceName
 	h.ExhaustiveSearch = si.ExhaustiveSearch
+	// Restore the distance function from its name. An index that was
+	// constructed with a custom function keeps it when the name is unknown.
+	if dist, ok := core.Distances[si.DistanceName]; ok {
+		h.Distance = dist
+	} else if h.Distance == nil {
+		return fmt.Errorf("unknown distance %q in serialized index", si.DistanceName)
+	}
 	h.Nodes = make(map[int]*Node)
 	// Recreate nodes from the serialized data.
 	for id, sn := range si.Nodes {
@@ -233,8 +242,23 @@ func (h *HNSWIndex) GobDecode(data []byte) error {
 			}
 		}
 	}
-	if si.EntryPoint != 0 {
+	// Rebuild the per-level bookkeeping used by Delete to pick a new entry point.
+	h.nodesByLevel = make(map[int]map[int]struct{})
+	for id, node := range h.Nodes {
+		if _, ok := h.nodesByLevel[node.Level]; !ok {
+			h.nodesByLevel[node.Level] = make(map[int]struct{})
+		}
+		h.nodesByLevel[node.Level][id] = struct{}{}
+	}
+	if si.HasEntryPoint {
 		h.EntryPoint = h.Nodes[si.EntryPoint]
+	} else if si.EntryPoint != 0 {
+		// Legacy files carry no flag and use id 0 as the nil sentinel.
+		h.EntryPoint = h.Nodes[si.EntryPoint]
+	} else if node, ok := h.Nodes[0]; ok {
+		// A legacy file whose entry point was the node with id 0 stored the
+		// sentinel value; recover by using that node.
+		h.EntryPoint = node
 	} else {
 		h.EntryPoint = nil
 	}
@@ -340,6 +364,27 @@ func (h *HNSWIndex) removeNodeLinks(n *Node) {
 	}
 }
 
+// resetEntryPoint recomputes MaxLevel and picks a new entry point from the
+// per-level bookkeeping, skipping the node with the given id. It leaves the
+// entry point nil when no other node exists. The caller must hold the lock.
+func (h *HNSWIndex) resetEntryPoint(excludeID int) {
+	h.EntryPoint = nil
+	h.MaxLevel = -1
+	for level, ids := range h.nodesByLevel {
+		if level <= h.MaxLevel {
+			continue
+		}
+		for id := range ids {
+			if id == excludeID {
+				continue
+			}
+			h.MaxLevel = level
+			h.EntryPoint = h.Nodes[id]
+			break
+		}
+	}
+}
+
 // minInt returns the smaller of two integers.
 func minInt(a, b int) int {
 	if a < b {
@@ -356,12 +401,14 @@ func (h *HNSWIndex) insertNode(n *Node, searchEf int) error {
 		h.MaxLevel = n.Level
 		return nil
 	}
+	// Seed the search from the current entry point before it may be updated,
+	// so the node being inserted never becomes its own search seed.
+	current := h.EntryPoint
 	// Update entry point if the new node has a higher level.
 	if n.Level > h.MaxLevel {
 		h.EntryPoint = n
 		h.MaxLevel = n.Level
 	}
-	current := h.EntryPoint
 	// Navigate the graph from the top level down to the node's level.
 	for L := h.MaxLevel; L > n.Level; L-- {
 		changed := true
@@ -399,6 +446,9 @@ func (h *HNSWIndex) insertNode(n *Node, searchEf int) error {
 		for _, neighbor := range selectedNodes {
 			neighbor.Links[L] = append(neighbor.Links[L], n)
 			neighbor.ReverseLinks[L] = append(neighbor.ReverseLinks[L], n)
+			// Record the backlink, so removeNodeLinks can later remove n from
+			// the neighbor's links.
+			n.ReverseLinks[L] = append(n.ReverseLinks[L], neighbor)
 			if len(neighbor.Links[L]) > h.M {
 				if err := trimNeighborLinks(neighbor, L, h.M, h.Distance); err != nil {
 					return err
@@ -563,6 +613,17 @@ func (h *HNSWIndex) Update(id int, vector []float32) error {
 	node.Vector = vector
 	node.Links = make(map[int][]*Node)
 	node.ReverseLinks = make(map[int][]*Node)
+	// Reinsertion must not start the search at the node itself, so move the
+	// entry point to another surviving node first.
+	if h.EntryPoint == node {
+		h.resetEntryPoint(node.ID)
+	}
+	if h.EntryPoint == nil {
+		// The node is the only one in the index.
+		h.EntryPoint = node
+		h.MaxLevel = node.Level
+		return nil
+	}
 	if err := h.insertNode(node, h.Ef); err != nil {
 		return err
 	}
@@ -584,6 +645,10 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 		core.NormalizeBatch(vecs)
 	}
 
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+
+	// The duplicate check reads h.Nodes, so it must happen under the lock.
 	nodesSlice := make([]*Node, 0, len(vectors))
 	for id, vector := range vectors {
 		if len(vector) != h.Dimension {
@@ -608,8 +673,6 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 		return nodesSlice[i].Level > nodesSlice[j].Level
 	})
 	bulkEf := h.Ef
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
 
 	// Initialize progress bar with a newline after finish.
 	bar := progressbar.NewOptions(len(nodesSlice),
@@ -618,6 +681,10 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 
 	for _, newNode := range nodesSlice {
 		h.Nodes[newNode.ID] = newNode
+		if _, ok := h.nodesByLevel[newNode.Level]; !ok {
+			h.nodesByLevel[newNode.Level] = make(map[int]struct{})
+		}
+		h.nodesByLevel[newNode.Level][newNode.ID] = struct{}{}
 		if h.EntryPoint == nil {
 			h.EntryPoint = newNode
 			h.MaxLevel = newNode.Level
@@ -658,6 +725,12 @@ func (h *HNSWIndex) BulkDelete(ids []int) error {
 		}
 		h.removeNodeLinks(node)
 		delete(h.Nodes, id)
+		if levelNodes, ok := h.nodesByLevel[node.Level]; ok {
+			delete(levelNodes, id)
+			if len(levelNodes) == 0 {
+				delete(h.nodesByLevel, node.Level)
+			}
+		}
 		err := bar.Add(1)
 		if err != nil {
 			return err
@@ -676,11 +749,13 @@ func (h *HNSWIndex) BulkDelete(ids []int) error {
 			n.Links[L] = newNeighbors
 		}
 	}
-	// Update the entry point.
+	// Update the entry point and the maximum level.
 	h.EntryPoint = nil
+	h.MaxLevel = -1
 	for _, n := range h.Nodes {
 		if h.EntryPoint == nil || n.Level > h.EntryPoint.Level {
 			h.EntryPoint = n
+			h.MaxLevel = n.Level
 		}
 	}
 	return nil
@@ -708,6 +783,7 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 	bar := progressbar.NewOptions(len(updates),
 		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
 	)
+	// Unlink and reinsert only the nodes being updated, as Update does.
 	for id, vector := range updates {
 		node, exists := h.Nodes[id]
 		if !exists {
@@ -725,33 +801,16 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 		node.Vector = vector
 		node.Links = make(map[int][]*Node)
 		node.ReverseLinks = make(map[int][]*Node)
-		err := bar.Add(1)
-		if err != nil {
-			return err
+		// Reinsertion must not start the search at the node itself, so move
+		// the entry point to another surviving node first.
+		if h.EntryPoint == node {
+			h.resetEntryPoint(node.ID)
 		}
-	}
-
-	// Reinsert all nodes to rebuild links.
-	allNodes := make([]*Node, 0, len(h.Nodes))
-	for _, node := range h.Nodes {
-		allNodes = append(allNodes, node)
-	}
-	sort.Slice(allNodes, func(i, j int) bool {
-		return allNodes[i].Level > allNodes[j].Level
-	})
-	h.EntryPoint = nil
-	h.MaxLevel = -1
-
-	// Progress bar for reinsertion with newline on finish.
-	bar = progressbar.NewOptions(len(allNodes),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
-	for _, node := range allNodes {
-		if h.EntryPoint == nil || node.Level > h.MaxLevel {
+		if h.EntryPoint == nil {
+			// The node is the only one in the index.
 			h.EntryPoint = node
 			h.MaxLevel = node.Level
-		}
-		if err := h.insertNode(node, h.Ef); err != nil {
+		} else if err := h.insertNode(node, h.Ef); err != nil {
 			return err
 		}
 		err := bar.Add(1)
@@ -834,6 +893,19 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 				continue
 			}
 			nodesSlice = append(nodesSlice, node)
+		}
+
+		// Skip the scan when every node is already a candidate, so the worker
+		// count cannot be clamped to zero.
+		if len(nodesSlice) == 0 {
+			if k > len(candidates) {
+				k = len(candidates)
+			}
+			results := make([]core.Neighbor, k)
+			for i := 0; i < k; i++ {
+				results[i] = core.Neighbor{ID: candidates[i].node.ID, Distance: candidates[i].dist}
+			}
+			return results, nil
 		}
 
 		numWorkers := runtime.NumCPU()
@@ -934,9 +1006,9 @@ func (h *HNSWIndex) Stats() core.IndexStats {
 }
 
 // Save writes the index to the given writer using gob encoding.
+// The lock is taken by GobEncode; taking it here as well would deadlock
+// when a writer queues between the two read lock acquisitions.
 func (h *HNSWIndex) Save(w io.Writer) error {
-	h.Mu.RLock()
-	defer h.Mu.RUnlock()
 	enc := gob.NewEncoder(w)
 	if err := enc.Encode(h); err != nil {
 		return err

@@ -1,7 +1,7 @@
 package core
 
 /*
-#cgo CFLAGS: -O2 -mavx
+#cgo CFLAGS: -O2
 #cgo LDFLAGS: -lm
 #include "simd_distance.h"
 */

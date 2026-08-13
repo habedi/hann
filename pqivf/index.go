@@ -65,10 +65,14 @@ func (pq *PQIVFIndex) recalcCentroid(cluster int) {
 	pq.coarseCentroids[cluster] = newCentroid
 }
 
-// NewPQIVFIndex creates a new PQIVF index. It panics if the dimension is not divisible by numSubquantizers.
+// NewPQIVFIndex creates a new PQIVF index. It panics if the dimension is not divisible by numSubquantizers,
+// or if coarseK is not positive.
 func NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters int) *PQIVFIndex {
 	if dimension%numSubquantizers != 0 {
 		panic(fmt.Sprintf("dimension (%d) must be divisible by numSubquantizers (%d)", dimension, numSubquantizers))
+	}
+	if coarseK <= 0 {
+		panic(fmt.Sprintf("coarseK (%d) must be positive", coarseK))
 	}
 	return &PQIVFIndex{
 		dimension:               dimension,
@@ -91,6 +95,9 @@ func NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters int) *
 
 // nearestCentroid finds the closest coarse centroid to the vector and returns its index and distance.
 func (pq *PQIVFIndex) nearestCentroid(vector []float32) (int, float64, error) {
+	if len(pq.coarseCentroids) == 0 {
+		return 0, 0, fmt.Errorf("no coarse centroids available")
+	}
 	best := -1
 	bestDist := math.MaxFloat64
 	for i, centroid := range pq.coarseCentroids {
@@ -136,11 +143,8 @@ func (pq *PQIVFIndex) Add(id int, vector []float32) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
-	if pq.dimension == 0 {
-		return fmt.Errorf("cannot add to a zero-dimension index")
-	}
-	if len(vector) != pq.dimension {
-		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), pq.dimension)
+	if err := pq.validateVector(vector); err != nil {
+		return err
 	}
 	if _, exists := pq.idToCluster[id]; exists {
 		return fmt.Errorf("id %d already exists in a cluster", id)
@@ -296,25 +300,53 @@ func (pq *PQIVFIndex) BulkDelete(ids []int) error {
 	return nil
 }
 
-// Update removes and then re-adds an entry with an updated vector.
-func (pq *PQIVFIndex) Update(id int, vector []float32) error {
-	if err := pq.Delete(id); err != nil {
-		return err
+// validateVector checks that a vector is compatible with the index
+// dimension. The caller must hold the mutex.
+func (pq *PQIVFIndex) validateVector(vector []float32) error {
+	if pq.dimension == 0 {
+		return fmt.Errorf("cannot add to a zero-dimension index")
 	}
-	if err := pq.Add(id, vector); err != nil {
-		return err
+	if len(vector) != pq.dimension {
+		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), pq.dimension)
 	}
-	pq.trained = false
 	return nil
 }
 
+// Update removes and then re-adds an entry with an updated vector.
+// The new vector is validated before the delete, so a failed update
+// leaves the index unchanged.
+func (pq *PQIVFIndex) Update(id int, vector []float32) error {
+	pq.mu.RLock()
+	err := pq.validateVector(vector)
+	pq.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	if err := pq.Delete(id); err != nil {
+		return err
+	}
+	return pq.Add(id, vector)
+}
+
 // BulkUpdate updates multiple entries with new vectors.
+// All vectors are validated before any entry is touched, so a
+// dimension mismatch leaves the index unchanged.
 func (pq *PQIVFIndex) BulkUpdate(updates map[int][]float32) error {
 	var keys []int
 	for id := range updates {
 		keys = append(keys, id)
 	}
 	sort.Ints(keys)
+
+	pq.mu.RLock()
+	for _, id := range keys {
+		if err := pq.validateVector(updates[id]); err != nil {
+			pq.mu.RUnlock()
+			return fmt.Errorf("invalid vector for id %d: %w", id, err)
+		}
+	}
+	pq.mu.RUnlock()
+
 	// Create a progress bar for updates.
 	bar := progressbar.NewOptions(len(keys),
 		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
@@ -329,7 +361,6 @@ func (pq *PQIVFIndex) BulkUpdate(updates map[int][]float32) error {
 			return err
 		}
 	}
-	pq.trained = false
 	return nil
 }
 
@@ -769,9 +800,10 @@ func (pq *PQIVFIndex) GobDecode(data []byte) error {
 }
 
 // Save writes the index to the given writer using gob encoding.
+// Encoding goes through GobEncode, which takes the read lock, so Save
+// must not take the lock itself; a recursive read lock can deadlock
+// when a writer queues between the two acquisitions.
 func (pq *PQIVFIndex) Save(w io.Writer) error {
-	pq.mu.RLock()
-	defer pq.mu.RUnlock()
 	enc := gob.NewEncoder(w)
 	return enc.Encode(pq)
 }

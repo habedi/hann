@@ -1,9 +1,16 @@
 #include "simd_ops.h"
 #include "simd_distance.h"
-#include <immintrin.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
+
+// The AVX variant is compiled with a per-function target attribute instead
+// of a package-wide -mavx flag, so the fallback function and hann_cpu_init
+// never contain AVX instructions and stay safe on CPUs without AVX.
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+#include <immintrin.h>
+#define HANN_TARGET_AVX __attribute__((target("avx")))
+#endif
 
 // Function pointer for the normalization function
 void (*simd_normalize_ptr)(float*, size_t);
@@ -22,7 +29,8 @@ void normalize_fallback(float *vec, size_t len) {
 }
 
 // AVX implementation for normalization
-#ifdef __AVX__
+#ifdef HANN_TARGET_AVX
+HANN_TARGET_AVX
 static inline float horizontal_sum256(__m256 v) {
     __m128 vlow = _mm256_castps256_ps128(v);
     __m128 vhigh = _mm256_extractf128_ps(v, 1);
@@ -34,6 +42,7 @@ static inline float horizontal_sum256(__m256 v) {
     return _mm_cvtss_f32(sums);
 }
 
+HANN_TARGET_AVX
 void normalize_avx(float *vec, size_t len) {
     __m256 sum = _mm256_setzero_ps();
     size_t i = 0;

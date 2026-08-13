@@ -4,8 +4,10 @@ This file provides guidance to coding agents collaborating on this repository.
 
 ## Mission
 
-Hann is an approximate nearest neighbor search library for Go. It provides a set of index data structures (HNSW, PQIVF, and RPT) behind one interface,
-with distance computation written in C and vectorized with AVX instructions. Priorities, in order:
+Hann is an approximate nearest neighbor search library for Go.
+It provides a set of index data structures (HNSW, PQIVF, and RPT) behind one interface, with distance computation written
+in C and vectorized with AVX instructions.
+Priorities, in order:
 
 1. Correctness of index operations: insertion, deletion, update, and search must keep the index consistent.
 2. Search quality and speed, measured by recall and query latency on the example datasets.

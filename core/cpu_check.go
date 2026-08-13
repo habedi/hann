@@ -1,7 +1,6 @@
 package core
 
 /*
-#cgo CFLAGS: -mavx -mavx2
 void hann_cpu_init(int support_level);
 */
 import "C"
