@@ -15,7 +15,6 @@ import (
 
 	"github.com/habedi/hann/core"
 	"github.com/rs/zerolog/log"
-	"github.com/schollz/progressbar/v3"
 )
 
 // seededRand is a global random number generator used for level generation.
@@ -146,7 +145,13 @@ type serializedIndex struct {
 	DistanceName     string                 // name of the distance metric
 	ExhaustiveSearch bool                   // Add this field
 	HasEntryPoint    bool                   // whether EntryPoint holds a valid node id
+	FormatVersion    int                    // on-disk format version
 }
+
+// formatVersion is the on-disk format version written by GobEncode. Files
+// written before the field existed decode it as zero and are accepted; files
+// written by a newer version of the format are rejected on load.
+const formatVersion = 1
 
 // GobEncode serializes the HNSWIndex using the gob encoder.
 func (h *HNSWIndex) GobEncode() ([]byte, error) {
@@ -161,6 +166,7 @@ func (h *HNSWIndex) GobEncode() ([]byte, error) {
 		MaxLevel:         h.MaxLevel,
 		DistanceName:     h.DistanceName,
 		ExhaustiveSearch: h.ExhaustiveSearch,
+		FormatVersion:    formatVersion,
 	}
 	for id, node := range h.Nodes {
 		sn := serializedNode{
@@ -198,6 +204,10 @@ func (h *HNSWIndex) GobDecode(data []byte) error {
 	if err := dec.Decode(&si); err != nil {
 		log.Error().Err(err).Msg("Failed to decode HNSWIndex")
 		return err
+	}
+	if si.FormatVersion > formatVersion {
+		return fmt.Errorf("index file has format version %d, but this build supports up to %d",
+			si.FormatVersion, formatVersion)
 	}
 	h.Dimension = si.Dimension
 	h.M = si.M
@@ -674,11 +684,6 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 	})
 	bulkEf := h.Ef
 
-	// Initialize progress bar with a newline after finish.
-	bar := progressbar.NewOptions(len(nodesSlice),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
-
 	for _, newNode := range nodesSlice {
 		h.Nodes[newNode.ID] = newNode
 		if _, ok := h.nodesByLevel[newNode.Level]; !ok {
@@ -697,10 +702,6 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 				return err
 			}
 		}
-		err := bar.Add(1)
-		if err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -710,17 +711,9 @@ func (h *HNSWIndex) BulkDelete(ids []int) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	// Initialize progress bar with newline on completion.
-	bar := progressbar.NewOptions(len(ids),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
 	for _, id := range ids {
 		node, exists := h.Nodes[id]
 		if !exists {
-			err := bar.Add(1)
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		h.removeNodeLinks(node)
@@ -730,10 +723,6 @@ func (h *HNSWIndex) BulkDelete(ids []int) error {
 			if len(levelNodes) == 0 {
 				delete(h.nodesByLevel, node.Level)
 			}
-		}
-		err := bar.Add(1)
-		if err != nil {
-			return err
 		}
 	}
 
@@ -779,18 +768,10 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	// Progress bar for processing updates with newline on finish.
-	bar := progressbar.NewOptions(len(updates),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
 	// Unlink and reinsert only the nodes being updated, as Update does.
 	for id, vector := range updates {
 		node, exists := h.Nodes[id]
 		if !exists {
-			err := bar.Add(1)
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		if len(vector) != h.Dimension {
@@ -811,10 +792,6 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 			h.EntryPoint = node
 			h.MaxLevel = node.Level
 		} else if err := h.insertNode(node, h.Ef); err != nil {
-			return err
-		}
-		err := bar.Add(1)
-		if err != nil {
 			return err
 		}
 	}
@@ -872,7 +849,7 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 		// Use fallback to gather more candidates if needed.
 
 		// Log that fallback is triggered.
-		log.Warn().Msgf("Fallback search triggered: insufficient candidates from"+
+		log.Debug().Msgf("Fallback search triggered: insufficient candidates from"+
 			" searchLayer; only %d found", len(candidates))
 
 		candidateIDs := make(map[int]bool)
@@ -917,9 +894,14 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 		errsCh := make(chan error, numWorkers)
 		var wg sync.WaitGroup
 
-		// Run parallel fallback search.
+		// Run parallel fallback search. The chunk size is rounded up, so the
+		// later workers can start past the end of the slice; they have no
+		// work left.
 		for i := 0; i < numWorkers; i++ {
 			start := i * chunkSize
+			if start >= len(nodesSlice) {
+				break
+			}
 			end := start + chunkSize
 			if end > len(nodesSlice) {
 				end = len(nodesSlice)

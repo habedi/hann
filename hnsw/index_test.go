@@ -2,15 +2,22 @@ package hnsw_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/hnsw"
+	"github.com/habedi/hann/internal/testutil"
 )
+
+var update = flag.Bool("update", false, "regenerate golden files")
 
 func TestHNSWIndex_AddAndStats(t *testing.T) {
 	dim := 6
@@ -729,5 +736,245 @@ func TestHNSWIndex_SearchSingleNodeLargeK(t *testing.T) {
 	}
 	if len(neighbors) != 1 || neighbors[0].ID != 1 {
 		t.Errorf("expected the single node as the only neighbor, got %v", neighbors)
+	}
+}
+
+func TestHNSWIndex_SearchFallbackChunking(t *testing.T) {
+	// The fallback path splits the unvisited nodes into chunks of
+	// ceil(len/numWorkers). When the workers overshoot the slice by more than
+	// one chunk, a worker's start index passes the slice length, which used to
+	// panic with a slice bounds error. Sweeping the index size across several
+	// multiples of the worker count hits the bad remainder on any CPU count
+	// that has one.
+	dim := 4
+	for n := 3; n <= 128; n++ {
+		// A small ef keeps searchLayer's result list short, so a search with
+		// k equal to the node count always enters the fallback.
+		index := hnsw.NewHNSW(dim, 4, 2, core.Euclidean, "euclidean")
+		for i := 0; i < n; i++ {
+			vec := []float32{float32(i), float32(i % 7), float32(i % 11), float32(i % 13)}
+			if err := index.Add(i, vec); err != nil {
+				t.Fatalf("Add(%d) failed: %v", i, err)
+			}
+		}
+		neighbors, err := index.Search([]float32{0, 0, 0, 0}, n)
+		if err != nil {
+			t.Fatalf("Search failed with %d nodes: %v", n, err)
+		}
+		if len(neighbors) != n {
+			t.Fatalf("Search with k=%d returned %d neighbors", n, len(neighbors))
+		}
+	}
+}
+
+// measureMeanRecall builds indexes over clustered data with the given
+// distance and returns the mean recall at k=10 over 20 queries per build
+// against the brute-force ground truth. The graph shape depends on the
+// package-level level generator, so recall varies between builds; averaging
+// over three builds narrows the spread the assertion has to allow for.
+func measureMeanRecall(t *testing.T, distance core.DistanceFunc, distanceName string) float64 {
+	t.Helper()
+	const (
+		dim      = 16
+		n        = 2000
+		clusters = 16
+		q        = 20
+		k        = 10
+		builds   = 3
+	)
+	total := 0.0
+	for b := 0; b < builds; b++ {
+		dataSeed := int64(42 + 100*b)
+		data := testutil.ClusteredData(dataSeed, n, dim, clusters)
+		index := hnsw.NewHNSW(dim, 16, 100, distance, distanceName)
+		// The index normalizes cosine vectors in place, so it gets copies and
+		// the ground truth keeps the raw data.
+		vectors := make(map[int][]float32, len(data))
+		for id, vec := range data {
+			vectors[id] = testutil.CopyVector(vec)
+		}
+		if err := index.BulkAdd(vectors); err != nil {
+			t.Fatalf("BulkAdd failed: %v", err)
+		}
+		queries := testutil.Queries(dataSeed+1, data, q)
+		for _, query := range queries {
+			want, err := testutil.BruteForceKNN(query, data, k, distance)
+			if err != nil {
+				t.Fatalf("BruteForceKNN failed: %v", err)
+			}
+			got, err := index.Search(testutil.CopyVector(query), k)
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			total += testutil.Recall(got, want)
+		}
+	}
+	return total / float64(q*builds)
+}
+
+func TestHNSWIndex_RecallEuclidean(t *testing.T) {
+	recall := measureMeanRecall(t, core.Euclidean, "euclidean")
+	t.Logf("euclidean mean recall at k=10: %.4f", recall)
+	// Observed range over 40 runs: 0.64 to 0.93. The spread comes from the
+	// level generator: the level 0 graph splits into per-cluster components,
+	// so recall depends on how well the upper levels route between clusters.
+	// The threshold is a regression tripwire, not a quality goal.
+	if recall < 0.50 {
+		t.Errorf("euclidean mean recall %.4f is below the regression threshold 0.50", recall)
+	}
+}
+
+func TestHNSWIndex_RecallCosine(t *testing.T) {
+	recall := measureMeanRecall(t, core.Distances["cosine"], "cosine")
+	t.Logf("cosine mean recall at k=10: %.4f", recall)
+	// Observed range over 40 runs: 0.55 to 0.92, with more spread than the
+	// euclidean variant. The threshold is a regression tripwire, not a
+	// quality goal.
+	if recall < 0.40 {
+		t.Errorf("cosine mean recall %.4f is below the regression threshold 0.40", recall)
+	}
+}
+
+// hnswFactory describes the HNSW index for the shared test runners. Search
+// sorts its candidates before returning, so results are sorted, and the
+// reported distances are computed against the stored vectors, so they are
+// exact.
+func hnswFactory() testutil.Factory {
+	return testutil.Factory{
+		New: func() core.Index {
+			return hnsw.NewHNSW(16, 16, 100, core.Euclidean, "euclidean")
+		},
+		ExactDistances: true,
+		SortedResults:  true,
+		Distance:       core.Euclidean,
+	}
+}
+
+func TestHNSWIndex_PropertyOps(t *testing.T) {
+	for _, seed := range []int64{1, 2, 3, 42, 12345} {
+		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+			testutil.RunPropertyOps(t, hnswFactory(), 16, seed, 400)
+		})
+	}
+}
+
+func TestHNSWIndex_ConcurrentOps(t *testing.T) {
+	testutil.RunConcurrentOps(t, hnswFactory(), 16, 8, 300)
+}
+
+// goldenExpected pins the observable behavior of the golden index file:
+// the stored vector count and the ids returned for three fixed queries.
+type goldenExpected struct {
+	Count     int     `json:"count"`
+	ResultIDs [][]int `json:"result_ids"`
+}
+
+// goldenData returns the deterministic vectors and queries the golden fixture
+// is built from and queried with.
+func goldenData() (map[int][]float32, [][]float32) {
+	data := testutil.ClusteredData(7, 30, 8, 4)
+	queries := testutil.Queries(8, data, 3)
+	return data, queries
+}
+
+// TestHNSWIndex_GoldenFile pins the gob on-disk format. In normal mode it
+// loads a committed fixture and checks the stats and search results against
+// the committed expectations; it must never regenerate the fixture
+// implicitly, because a fixture written by an older version has to keep
+// loading. Run with -update to rebuild the fixture after a deliberate,
+// backward-compatible format change.
+func TestHNSWIndex_GoldenFile(t *testing.T) {
+	gobPath := filepath.Join("testdata", "index_v1.gob")
+	jsonPath := filepath.Join("testdata", "index_v1_expected.json")
+	data, queries := goldenData()
+
+	if *update {
+		if err := os.MkdirAll("testdata", 0o755); err != nil {
+			t.Fatalf("failed to create testdata: %v", err)
+		}
+		index := hnsw.NewHNSW(8, 8, 50, core.Euclidean, "euclidean")
+		// Insert id 0 first, so it can plausibly become the entry point, which
+		// is the case the HasEntryPoint flag exists for.
+		for id := 0; id < len(data); id++ {
+			if err := index.Add(id, testutil.CopyVector(data[id])); err != nil {
+				t.Fatalf("Add(%d) failed: %v", id, err)
+			}
+		}
+		if err := index.Delete(5); err != nil {
+			t.Fatalf("Delete failed: %v", err)
+		}
+		f, err := os.Create(gobPath)
+		if err != nil {
+			t.Fatalf("failed to create %s: %v", gobPath, err)
+		}
+		if err := index.Save(f); err != nil {
+			t.Fatalf("Save failed: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("failed to close %s: %v", gobPath, err)
+		}
+		expected := goldenExpected{Count: index.Stats().Count}
+		for _, query := range queries {
+			neighbors, err := index.Search(testutil.CopyVector(query), 5)
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			ids := make([]int, len(neighbors))
+			for i, n := range neighbors {
+				ids[i] = n.ID
+			}
+			expected.ResultIDs = append(expected.ResultIDs, ids)
+		}
+		out, err := json.MarshalIndent(expected, "", "  ")
+		if err != nil {
+			t.Fatalf("failed to marshal expectations: %v", err)
+		}
+		if err := os.WriteFile(jsonPath, append(out, '\n'), 0o644); err != nil {
+			t.Fatalf("failed to write %s: %v", jsonPath, err)
+		}
+		t.Logf("regenerated %s and %s", gobPath, jsonPath)
+		return
+	}
+
+	raw, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatalf("failed to read %s (run with -update to generate it): %v", jsonPath, err)
+	}
+	var expected goldenExpected
+	if err := json.Unmarshal(raw, &expected); err != nil {
+		t.Fatalf("failed to parse %s: %v", jsonPath, err)
+	}
+	f, err := os.Open(gobPath)
+	if err != nil {
+		t.Fatalf("failed to open %s (run with -update to generate it): %v", gobPath, err)
+	}
+	defer f.Close()
+	loaded := hnsw.NewHNSW(8, 8, 50, core.Euclidean, "euclidean")
+	if err := loaded.Load(f); err != nil {
+		t.Fatalf("Load failed on the golden fixture: %v", err)
+	}
+	if got := loaded.Stats().Count; got != expected.Count {
+		t.Errorf("Stats().Count = %d after loading the golden fixture, want %d", got, expected.Count)
+	}
+	for qi, query := range queries {
+		neighbors, err := loaded.Search(testutil.CopyVector(query), 5)
+		if err != nil {
+			t.Fatalf("Search failed on the loaded golden fixture: %v", err)
+		}
+		ids := make([]int, len(neighbors))
+		for i, n := range neighbors {
+			ids[i] = n.ID
+		}
+		want := expected.ResultIDs[qi]
+		if len(ids) != len(want) {
+			t.Errorf("query %d returned ids %v, want %v", qi, ids, want)
+			continue
+		}
+		for i := range ids {
+			if ids[i] != want[i] {
+				t.Errorf("query %d returned ids %v, want %v", qi, ids, want)
+				break
+			}
+		}
 	}
 }
