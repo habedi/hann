@@ -10,7 +10,6 @@
 [![Tests](https://img.shields.io/github/actions/workflow/status/habedi/hann/tests.yml?label=tests&style=flat&labelColor=282c34&logo=github)](https://github.com/habedi/hann/actions/workflows/tests.yml)
 [![Lints](https://img.shields.io/github/actions/workflow/status/habedi/hann/lints.yml?label=lints&style=flat&labelColor=282c34&logo=github)](https://github.com/habedi/hann/actions/workflows/lints.yml)
 [![Code Coverage](https://img.shields.io/codecov/c/github/habedi/hann?label=coverage&style=flat&labelColor=282c34&logo=codecov)](https://codecov.io/gh/habedi/hann)
-[![CodeFactor](https://img.shields.io/codefactor/grade/github/habedi/hann?label=code%20quality&style=flat&labelColor=282c34&logo=codefactor)](https://www.codefactor.io/repository/github/habedi/hann)
 [![Go Reference](https://img.shields.io/badge/reference-docs-3776ab?style=flat&labelColor=282c34&logo=go)](https://pkg.go.dev/github.com/habedi/hann)
 [![License](https://img.shields.io/badge/license-MIT-00acc1?label=license&style=flat&labelColor=282c34&logo=open-source-initiative)](LICENSE)
 [![Release](https://img.shields.io/github/release/habedi/hann.svg?label=release&style=flat&labelColor=282c34&logo=github&color=f06623)](https://github.com/habedi/hann/releases/latest)
