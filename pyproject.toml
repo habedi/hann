@@ -5,9 +5,9 @@ description = "The Python environment for the Hann project"
 
 requires-python = ">=3.10,<4.0"
 dependencies = [
-    "python-dotenv (>=1.1.0,<2.0.0)",
-    "pre-commit (>=4.2.0,<5.0.0)",
-    "huggingface-hub>=0.29.3,<0.30.0",
+    "python-dotenv>=1.1.0",
+    "pre-commit>=4.2.0",
+    "huggingface-hub>=0.29.3",
 ]
 
 [project.optional-dependencies]
@@ -15,8 +15,8 @@ dev = [
     "pytest>=8.0.1",
     "pytest-cov>=6.0.0",
     "pytest-mock>=3.14.0",
-    "pytest-asyncio (>=0.26.0,<0.27.0)",
+    "pytest-asyncio>=0.26.0",
     "mypy>=1.11.1",
     "ruff>=0.9.3",
-    "icecream (>=2.1.4,<3.0.0)"
+    "icecream>=2.1.4"
 ]
