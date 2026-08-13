@@ -12,7 +12,6 @@ import (
 
 	"github.com/habedi/hann/core"
 	"github.com/rs/zerolog/log"
-	"github.com/schollz/progressbar/v3"
 )
 
 // seededRand is a global random number generator for random operations (e.g. during k-means).
@@ -142,7 +141,12 @@ func (pq *PQIVFIndex) nearestCentroids(vector []float32) ([]struct {
 func (pq *PQIVFIndex) Add(id int, vector []float32) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
+	return pq.addLocked(id, vector)
+}
 
+// addLocked inserts a new vector with an id into the temporary holding
+// area. The caller must hold the mutex.
+func (pq *PQIVFIndex) addLocked(id int, vector []float32) error {
 	if err := pq.validateVector(vector); err != nil {
 		return err
 	}
@@ -169,10 +173,6 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 	}
 	sort.Ints(keys)
 
-	bar := progressbar.NewOptions(len(keys),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
-
 	for _, id := range keys {
 		vector := vectors[id]
 		if len(vector) != pq.dimension {
@@ -186,10 +186,6 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 		}
 
 		pq.pendingVectors[id] = vector
-		err := bar.Add(1)
-		if err != nil {
-			return err
-		}
 	}
 	pq.trained = false
 	return nil
@@ -199,7 +195,12 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 func (pq *PQIVFIndex) Delete(id int) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
+	return pq.deleteLocked(id)
+}
 
+// deleteLocked removes an entry by its id, from either pending vectors or
+// clustered data. The caller must hold the mutex.
+func (pq *PQIVFIndex) deleteLocked(id int) error {
 	// If the vector is in the pending list, remove it from there.
 	if _, exists := pq.pendingVectors[id]; exists {
 		delete(pq.pendingVectors, id)
@@ -244,35 +245,20 @@ func (pq *PQIVFIndex) BulkDelete(ids []int) error {
 	defer pq.mu.Unlock()
 
 	sort.Ints(ids)
-	bar := progressbar.NewOptions(len(ids),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
 	updatedClusters := make(map[int]bool)
 	for _, id := range ids {
 		// If in pending, just delete.
 		if _, exists := pq.pendingVectors[id]; exists {
 			delete(pq.pendingVectors, id)
-			err := bar.Add(1)
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		// Otherwise, find in clusters.
 		cluster, exists := pq.idToCluster[id]
 		if !exists {
-			err := bar.Add(1)
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		entries, ok := pq.invertedLists[cluster]
 		if !ok {
-			err := bar.Add(1)
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		var newEntries []pqEntry
@@ -287,10 +273,6 @@ func (pq *PQIVFIndex) BulkDelete(ids []int) error {
 		delete(pq.idToCluster, id)
 		if len(newEntries) > 0 {
 			updatedClusters[cluster] = true
-		}
-		err := bar.Add(1)
-		if err != nil {
-			return err
 		}
 	}
 	for cluster := range updatedClusters {
@@ -312,23 +294,25 @@ func (pq *PQIVFIndex) validateVector(vector []float32) error {
 	return nil
 }
 
-// Update removes and then re-adds an entry with an updated vector.
-// The new vector is validated before the delete, so a failed update
-// leaves the index unchanged.
+// Update removes and then re-adds an entry with an updated vector as one
+// critical section, so no other operation can observe or interleave with
+// the intermediate deleted state. The new vector is validated before the
+// delete, so a failed update leaves the index unchanged.
 func (pq *PQIVFIndex) Update(id int, vector []float32) error {
-	pq.mu.RLock()
-	err := pq.validateVector(vector)
-	pq.mu.RUnlock()
-	if err != nil {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+
+	if err := pq.validateVector(vector); err != nil {
 		return err
 	}
-	if err := pq.Delete(id); err != nil {
+	if err := pq.deleteLocked(id); err != nil {
 		return err
 	}
-	return pq.Add(id, vector)
+	return pq.addLocked(id, vector)
 }
 
-// BulkUpdate updates multiple entries with new vectors.
+// BulkUpdate updates multiple entries with new vectors as one critical
+// section, so no other operation can interleave with the batch.
 // All vectors are validated before any entry is touched, so a
 // dimension mismatch leaves the index unchanged.
 func (pq *PQIVFIndex) BulkUpdate(updates map[int][]float32) error {
@@ -338,26 +322,20 @@ func (pq *PQIVFIndex) BulkUpdate(updates map[int][]float32) error {
 	}
 	sort.Ints(keys)
 
-	pq.mu.RLock()
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+
 	for _, id := range keys {
 		if err := pq.validateVector(updates[id]); err != nil {
-			pq.mu.RUnlock()
 			return fmt.Errorf("invalid vector for id %d: %w", id, err)
 		}
 	}
-	pq.mu.RUnlock()
 
-	// Create a progress bar for updates.
-	bar := progressbar.NewOptions(len(keys),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
 	for _, id := range keys {
-		vector := updates[id]
-		if err := pq.Update(id, vector); err != nil {
+		if err := pq.deleteLocked(id); err != nil {
 			return err
 		}
-		err := bar.Add(1)
-		if err != nil {
+		if err := pq.addLocked(id, updates[id]); err != nil {
 			return err
 		}
 	}
@@ -657,7 +635,7 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	// If the number of candidates is less than k, and fallback is allowed,
 	// perform a brute-force scan over all entries.
 	if len(entries) < k && pq.AllowBruteForceFallback {
-		log.Warn().Msgf("Search for k=%d yielded only %d candidates from probed clusters. Falling back to brute-force scan.", k, len(entries))
+		log.Debug().Msgf("Search for k=%d yielded only %d candidates from probed clusters. Falling back to brute-force scan.", k, len(entries))
 		var allEntries []pqEntry
 		for _, list := range pq.invertedLists {
 			allEntries = append(allEntries, list...)
@@ -693,7 +671,7 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 
 		// Central point for handling any distance calculation error for this entry
 		if distErr != nil {
-			log.Warn().Err(distErr).Msgf("Failed to compute distance for vector ID %d, skipping candidate", entry.ID)
+			log.Debug().Err(distErr).Msgf("Failed to compute distance for vector ID %d, skipping candidate", entry.ID)
 			continue // Skip this candidate
 		}
 
@@ -737,7 +715,13 @@ type serializedPQIVF struct {
 	AllowBruteForceFallback bool
 	Trained                 bool
 	PendingVectors          map[int][]float32
+	FormatVersion           int
 }
+
+// formatVersion is the on-disk format version written by GobEncode. Files
+// written before the field existed decode it as zero and are accepted; files
+// written by a newer version of the format are rejected on load.
+const formatVersion = 1
 
 // GobEncode serializes the index into bytes using gob.
 func (pq *PQIVFIndex) GobEncode() ([]byte, error) {
@@ -756,6 +740,7 @@ func (pq *PQIVFIndex) GobEncode() ([]byte, error) {
 		AllowBruteForceFallback: pq.AllowBruteForceFallback,
 		Trained:                 pq.trained,
 		PendingVectors:          pq.pendingVectors,
+		FormatVersion:           formatVersion,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -772,6 +757,10 @@ func (pq *PQIVFIndex) GobDecode(data []byte) error {
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&ser); err != nil {
 		return err
+	}
+	if ser.FormatVersion > formatVersion {
+		return fmt.Errorf("index file has format version %d, but this build supports up to %d",
+			ser.FormatVersion, formatVersion)
 	}
 	pq.dimension = ser.Dimension
 	pq.coarseK = ser.CoarseK

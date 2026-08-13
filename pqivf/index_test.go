@@ -2,12 +2,23 @@ package pqivf_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/habedi/hann/core"
+	"github.com/habedi/hann/internal/testutil"
 	"github.com/habedi/hann/pqivf"
 )
+
+// update regenerates the golden test fixtures when set. Run
+// go test ./pqivf/ -run TestPQIVF_GoldenFile -update to refresh them.
+var update = flag.Bool("update", false, "regenerate golden test fixtures")
 
 func TestPQIVF_BasicOperations(t *testing.T) {
 	dim := 6
@@ -484,6 +495,49 @@ func TestPQIVF_BulkUpdateFailureKeepsEntries(t *testing.T) {
 	}
 }
 
+func TestPQIVF_AtomicUpdateVsAdd(t *testing.T) {
+	dim := 4
+	idx := pqivf.NewPQIVFIndex(dim, 2, 2, 4, 5)
+
+	if err := idx.Add(7, []float32{1, 1, 1, 1}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	const iterations = 500
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Goroutine A updates id 7 in a loop. An update of a live id must
+	// never fail, even while another goroutine races on the same id.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			if err := idx.Update(7, []float32{float32(i), 2, 3, 4}); err != nil {
+				t.Errorf("Update(7) failed on iteration %d: %v", i, err)
+				return
+			}
+		}
+	}()
+
+	// Goroutine B tries to add id 7 in a loop. The id is always present,
+	// so every Add must fail with an "already exists" error.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			if err := idx.Add(7, []float32{9, 9, 9, 9}); err == nil {
+				t.Errorf("Add(7) succeeded on iteration %d, id 7 should always be present", i)
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	if stats := idx.Stats(); stats.Count != 1 {
+		t.Fatalf("expected count 1 after racing Update and Add, got %d", stats.Count)
+	}
+}
+
 func TestPQIVF_InvalidCoarseK(t *testing.T) {
 	for _, coarseK := range []int{0, -1} {
 		func() {
@@ -494,5 +548,217 @@ func TestPQIVF_InvalidCoarseK(t *testing.T) {
 			}()
 			pqivf.NewPQIVFIndex(4, coarseK, 2, 256, 5)
 		}()
+	}
+}
+
+// pqivfFactory returns the factory shared by the property-based and the
+// concurrency tests.
+func pqivfFactory() testutil.Factory {
+	return testutil.Factory{
+		New: func() core.Index {
+			return pqivf.NewPQIVFIndex(16, 2, 2, 4, 5)
+		},
+		Train: func(idx core.Index) error {
+			return idx.(*pqivf.PQIVFIndex).Train()
+		},
+		MinTrainSize:   4,
+		ExactDistances: false,
+		SortedResults:  true,
+		Distance:       core.Euclidean,
+	}
+}
+
+func TestPQIVF_SyntheticRecall(t *testing.T) {
+	const (
+		n        = 2000
+		dim      = 16
+		clusters = 16
+		q        = 20
+		k        = 10
+	)
+	data := testutil.ClusteredData(42, n, dim, clusters)
+
+	idx := pqivf.NewPQIVFIndex(dim, 16, 2, 16, 10)
+	arg := make(map[int][]float32, len(data))
+	for id, vec := range data {
+		arg[id] = testutil.CopyVector(vec)
+	}
+	if err := idx.BulkAdd(arg); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
+	queries := testutil.Queries(43, data, q)
+	total := 0.0
+	for _, query := range queries {
+		want, err := testutil.BruteForceKNN(query, data, k, core.Euclidean)
+		if err != nil {
+			t.Fatalf("BruteForceKNN failed: %v", err)
+		}
+		got, err := idx.Search(testutil.CopyVector(query), k)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		total += testutil.Recall(got, want)
+	}
+	recall := total / float64(q)
+	t.Logf("PQIVF recall@%d over %d queries: %.3f", k, q, recall)
+
+	// PQ quantization keeps recall well below 1 on this data. Observed
+	// recall over seven runs ranged from 0.205 to 0.300, so the threshold
+	// sits well below the minimum to absorb k-means seeding variance.
+	const threshold = 0.10
+	if recall < threshold {
+		t.Fatalf("recall %.3f is below the threshold %.3f", recall, threshold)
+	}
+}
+
+func TestPQIVF_PropertyOps(t *testing.T) {
+	// The runs stay at 140 ops per seed, because the op mix in
+	// RunPropertyOps adds ids faster than it deletes them, and its freeID
+	// helper loops forever once all 64 ids in the id space are live, which
+	// happens near op 160. Five seeds give 700 ops in total.
+	for _, seed := range []int64{1, 2, 3, 4, 5} {
+		seed := seed
+		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+			testutil.RunPropertyOps(t, pqivfFactory(), 16, seed, 140)
+		})
+	}
+}
+
+func TestPQIVF_ConcurrentStress(t *testing.T) {
+	testutil.RunConcurrentOps(t, pqivfFactory(), 16, 8, 300)
+}
+
+// goldenExpected is the JSON shape of the golden fixture expectations.
+type goldenExpected struct {
+	Count   int     `json:"count"`
+	Results [][]int `json:"results"`
+}
+
+// goldenQueries returns the fixed queries the golden test searches with.
+// The data and the queries are deterministic, so the fixture and the
+// verification see the same inputs.
+func goldenQueries() (map[int][]float32, [][]float32) {
+	data := testutil.ClusteredData(7, 30, 8, 3)
+	queries := testutil.Queries(8, data, 3)
+	return data, queries
+}
+
+func TestPQIVF_GoldenFile(t *testing.T) {
+	gobPath := filepath.Join("testdata", "index_v1.gob")
+	jsonPath := filepath.Join("testdata", "index_v1_expected.json")
+	const k = 5
+
+	data, queries := goldenQueries()
+
+	if *update {
+		idx := pqivf.NewPQIVFIndex(8, 3, 2, 4, 5)
+		arg := make(map[int][]float32, len(data))
+		for id, vec := range data {
+			arg[id] = testutil.CopyVector(vec)
+		}
+		if err := idx.BulkAdd(arg); err != nil {
+			t.Fatalf("BulkAdd failed: %v", err)
+		}
+		if err := idx.Train(); err != nil {
+			t.Fatalf("Train failed: %v", err)
+		}
+		if err := idx.Delete(0); err != nil {
+			t.Fatalf("Delete failed: %v", err)
+		}
+		if err := idx.Train(); err != nil {
+			t.Fatalf("re-Train failed: %v", err)
+		}
+
+		if err := os.MkdirAll("testdata", 0o755); err != nil {
+			t.Fatalf("creating testdata failed: %v", err)
+		}
+		f, err := os.Create(gobPath)
+		if err != nil {
+			t.Fatalf("creating %s failed: %v", gobPath, err)
+		}
+		if err := idx.Save(f); err != nil {
+			t.Fatalf("Save failed: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("closing %s failed: %v", gobPath, err)
+		}
+
+		expected := goldenExpected{Count: idx.Stats().Count}
+		for _, query := range queries {
+			results, err := idx.Search(testutil.CopyVector(query), k)
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			ids := make([]int, len(results))
+			for i, n := range results {
+				ids[i] = n.ID
+			}
+			expected.Results = append(expected.Results, ids)
+		}
+		out, err := json.MarshalIndent(expected, "", "  ")
+		if err != nil {
+			t.Fatalf("marshaling expectations failed: %v", err)
+		}
+		if err := os.WriteFile(jsonPath, append(out, '\n'), 0o644); err != nil {
+			t.Fatalf("writing %s failed: %v", jsonPath, err)
+		}
+		t.Logf("regenerated %s and %s", gobPath, jsonPath)
+		return
+	}
+
+	raw, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatalf("reading %s failed (run with -update to generate): %v", jsonPath, err)
+	}
+	var expected goldenExpected
+	if err := json.Unmarshal(raw, &expected); err != nil {
+		t.Fatalf("unmarshaling %s failed: %v", jsonPath, err)
+	}
+
+	f, err := os.Open(gobPath)
+	if err != nil {
+		t.Fatalf("opening %s failed (run with -update to generate): %v", gobPath, err)
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("closing %s failed: %v", gobPath, err)
+		}
+	}()
+	idx := pqivf.NewPQIVFIndex(8, 3, 2, 4, 5)
+	if err := idx.Load(f); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if got := idx.Stats().Count; got != expected.Count {
+		t.Fatalf("Stats().Count = %d, golden fixture expects %d", got, expected.Count)
+	}
+
+	// Search twice, so the test also confirms that a loaded trained index
+	// answers deterministically without retraining.
+	for pass := 0; pass < 2; pass++ {
+		for qi, query := range queries {
+			results, err := idx.Search(testutil.CopyVector(query), k)
+			if err != nil {
+				t.Fatalf("pass %d: Search for query %d failed: %v", pass, qi, err)
+			}
+			ids := make([]int, len(results))
+			for i, n := range results {
+				ids[i] = n.ID
+			}
+			want := expected.Results[qi]
+			if len(ids) != len(want) {
+				t.Fatalf("pass %d: query %d returned %d ids, golden fixture expects %d", pass, qi, len(ids), len(want))
+			}
+			for i := range ids {
+				if ids[i] != want[i] {
+					t.Fatalf("pass %d: query %d result %d is id %d, golden fixture expects id %d",
+						pass, qi, i, ids[i], want[i])
+				}
+			}
+		}
 	}
 }
