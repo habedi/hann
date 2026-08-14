@@ -9,10 +9,9 @@ import (
 	"math/rand"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/habedi/hann/core"
-	"github.com/rs/zerolog/log"
-	"github.com/schollz/progressbar/v3"
 )
 
 // seededRand is a global random number generator for random operations (e.g. during k-means).
@@ -27,9 +26,12 @@ type pqEntry struct {
 	Cluster int       // coarse cluster assignment
 }
 
-// PQIVFIndex is the main structure for the PQIVF index.
-type PQIVFIndex struct {
+// Index is the PQIVF index. The index is Euclidean-only, because the k-means
+// centroid averaging it uses for coarse clustering and product quantization
+// assumes the Euclidean metric.
+type Index struct {
 	mu                      sync.RWMutex      // mutex for concurrent access
+	fallbackSearches        atomic.Int64      // searches that fell back to a brute-force scan
 	dimension               int               // dimension of the vectors
 	coarseK                 int               // number of coarse clusters
 	coarseCentroids         [][]float32       // centroids for coarse quantization
@@ -40,15 +42,55 @@ type PQIVFIndex struct {
 	pqK                     int               // number of centroids per subquantizer (PQ codebook size)
 	kMeansIters             int               // number of iterations for training the subquantizers
 	idToCluster             map[int]int       // mapping from vector id to its cluster assignment
-	Distance                core.DistanceFunc // function to compute distance between vectors
+	metric                  core.Metric       // metric used for distance computation, fixed to Euclidean
 	numCandidateClusters    int               // number of candidate clusters to consider during search
-	AllowBruteForceFallback bool              // whether to allow falling back to a full brute-force scan
+	allowBruteForceFallback bool              // whether to allow falling back to a full brute-force scan
 	trained                 bool
 	pendingVectors          map[int][]float32 // temporary holding area for vectors before training
 }
 
+// Option configures an index created by New.
+type Option func(*Index)
+
+// WithCoarseK sets the number of coarse clusters. The default is 16.
+func WithCoarseK(coarseK int) Option {
+	return func(pq *Index) { pq.coarseK = coarseK }
+}
+
+// WithNumSubquantizers sets the number of subquantizers the vectors are split
+// into. The dimension must be divisible by this value. The default is the
+// largest of 8, 4, 2, and 1 that divides the dimension.
+func WithNumSubquantizers(numSubquantizers int) Option {
+	return func(pq *Index) { pq.numSubquantizers = numSubquantizers }
+}
+
+// WithPQK sets the number of centroids per subquantizer, which is the PQ
+// codebook size. The default is 16.
+func WithPQK(pqK int) Option {
+	return func(pq *Index) { pq.pqK = pqK }
+}
+
+// WithKMeansIters sets the number of k-means iterations used during training.
+// The default is 10.
+func WithKMeansIters(iters int) Option {
+	return func(pq *Index) { pq.kMeansIters = iters }
+}
+
+// WithCandidateClusters sets the number of candidate clusters probed during
+// search. The default is 3.
+func WithCandidateClusters(n int) Option {
+	return func(pq *Index) { pq.numCandidateClusters = n }
+}
+
+// WithBruteForceFallback sets whether a search that gathers fewer than k
+// candidates from the probed clusters may fall back to a brute-force scan
+// over all entries. The fallback is on by default.
+func WithBruteForceFallback(allow bool) Option {
+	return func(pq *Index) { pq.allowBruteForceFallback = allow }
+}
+
 // recalcCentroid recalculates the centroid for a given cluster based on its current entries.
-func (pq *PQIVFIndex) recalcCentroid(cluster int) {
+func (pq *Index) recalcCentroid(cluster int) {
 	entries := pq.invertedLists[cluster]
 	if len(entries) == 0 {
 		return
@@ -65,36 +107,79 @@ func (pq *PQIVFIndex) recalcCentroid(cluster int) {
 	pq.coarseCentroids[cluster] = newCentroid
 }
 
-// NewPQIVFIndex creates a new PQIVF index. It panics if the dimension is not divisible by numSubquantizers.
-func NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters int) *PQIVFIndex {
-	if dimension%numSubquantizers != 0 {
-		panic(fmt.Sprintf("dimension (%d) must be divisible by numSubquantizers (%d)", dimension, numSubquantizers))
+// New creates a new PQIVF index for vectors of the given dimension. The
+// index always uses the Euclidean metric, because k-means centroid averaging
+// assumes it. Defaults: 16 coarse clusters, a PQ codebook size of 16, 10
+// k-means iterations, 3 candidate clusters probed per search, the brute-force
+// fallback on, and the number of subquantizers set to the largest of 8, 4, 2,
+// and 1 that divides the dimension. It returns an error when the dimension,
+// the number of coarse clusters, the PQ codebook size, or the number of
+// k-means iterations is not positive, or when the dimension is not divisible
+// by the number of subquantizers.
+func New(dimension int, opts ...Option) (*Index, error) {
+	if dimension <= 0 {
+		return nil, fmt.Errorf("dimension (%d) must be positive", dimension)
 	}
-	return &PQIVFIndex{
+	pq := &Index{
 		dimension:               dimension,
-		coarseK:                 coarseK,
+		coarseK:                 16,
 		coarseCentroids:         make([][]float32, 0),
 		clusterCounts:           make(map[int]int),
 		invertedLists:           make(map[int][]pqEntry),
-		numSubquantizers:        numSubquantizers,
+		numSubquantizers:        defaultNumSubquantizers(dimension),
 		codebooks:               nil,
-		pqK:                     pqK,
-		kMeansIters:             kMeansIters,
+		pqK:                     16,
+		kMeansIters:             10,
 		idToCluster:             make(map[int]int),
-		Distance:                core.Euclidean,
+		metric:                  core.Euclidean,
 		numCandidateClusters:    3,
-		AllowBruteForceFallback: true,
+		allowBruteForceFallback: true,
 		trained:                 false,
 		pendingVectors:          make(map[int][]float32),
 	}
+	for _, opt := range opts {
+		opt(pq)
+	}
+	if pq.coarseK <= 0 {
+		return nil, fmt.Errorf("coarseK (%d) must be positive", pq.coarseK)
+	}
+	if pq.pqK <= 0 {
+		return nil, fmt.Errorf("pqK (%d) must be positive", pq.pqK)
+	}
+	if pq.kMeansIters <= 0 {
+		return nil, fmt.Errorf("kMeansIters (%d) must be positive", pq.kMeansIters)
+	}
+	if pq.numSubquantizers <= 0 {
+		return nil, fmt.Errorf("numSubquantizers (%d) must be positive", pq.numSubquantizers)
+	}
+	if dimension%pq.numSubquantizers != 0 {
+		return nil, fmt.Errorf("dimension (%d) must be divisible by numSubquantizers (%d)", dimension, pq.numSubquantizers)
+	}
+	return pq, nil
 }
 
-// nearestCentroid finds the closest coarse centroid to the vector and returns its index and distance.
-func (pq *PQIVFIndex) nearestCentroid(vector []float32) (int, float64, error) {
+// defaultNumSubquantizers returns the largest of 8, 4, 2, and 1 that divides
+// the dimension.
+func defaultNumSubquantizers(dimension int) int {
+	for _, n := range []int{8, 4, 2} {
+		if dimension%n == 0 {
+			return n
+		}
+	}
+	return 1
+}
+
+// nearestCentroid finds the closest coarse centroid to the vector and returns
+// its index and its rank distance. The distance is only used for ordering, so
+// it stays in rank space.
+func (pq *Index) nearestCentroid(vector []float32) (int, float64, error) {
+	if len(pq.coarseCentroids) == 0 {
+		return 0, 0, fmt.Errorf("no coarse centroids available")
+	}
 	best := -1
 	bestDist := math.MaxFloat64
 	for i, centroid := range pq.coarseCentroids {
-		d, err := pq.Distance(vector, centroid)
+		d, err := pq.metric.Rank(vector, centroid)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -106,8 +191,10 @@ func (pq *PQIVFIndex) nearestCentroid(vector []float32) (int, float64, error) {
 	return best, bestDist, nil
 }
 
-// nearestCentroids returns a sorted slice of clusters with their distances to the vector.
-func (pq *PQIVFIndex) nearestCentroids(vector []float32) ([]struct {
+// nearestCentroids returns a sorted slice of clusters with their rank
+// distances to the vector. The distances are only used for ordering, so they
+// stay in rank space.
+func (pq *Index) nearestCentroids(vector []float32) ([]struct {
 	cluster int
 	dist    float64
 }, error) {
@@ -116,7 +203,7 @@ func (pq *PQIVFIndex) nearestCentroids(vector []float32) ([]struct {
 		dist    float64
 	}, 0, len(pq.coarseCentroids))
 	for i, centroid := range pq.coarseCentroids {
-		d, err := pq.Distance(vector, centroid)
+		d, err := pq.metric.Rank(vector, centroid)
 		if err != nil {
 			return nil, err
 		}
@@ -132,15 +219,17 @@ func (pq *PQIVFIndex) nearestCentroids(vector []float32) ([]struct {
 }
 
 // Add inserts a new vector with an id into the temporary holding area.
-func (pq *PQIVFIndex) Add(id int, vector []float32) error {
+func (pq *Index) Add(id int, vector []float32) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
+	return pq.addLocked(id, vector)
+}
 
-	if pq.dimension == 0 {
-		return fmt.Errorf("cannot add to a zero-dimension index")
-	}
-	if len(vector) != pq.dimension {
-		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), pq.dimension)
+// addLocked inserts a new vector with an id into the temporary holding
+// area. The caller must hold the mutex.
+func (pq *Index) addLocked(id int, vector []float32) error {
+	if err := pq.validateVector(vector); err != nil {
+		return err
 	}
 	if _, exists := pq.idToCluster[id]; exists {
 		return fmt.Errorf("id %d already exists in a cluster", id)
@@ -155,7 +244,7 @@ func (pq *PQIVFIndex) Add(id int, vector []float32) error {
 }
 
 // BulkAdd inserts multiple vectors into the temporary holding area.
-func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
+func (pq *Index) BulkAdd(vectors map[int][]float32) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
@@ -164,10 +253,6 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 		keys = append(keys, id)
 	}
 	sort.Ints(keys)
-
-	bar := progressbar.NewOptions(len(keys),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
 
 	for _, id := range keys {
 		vector := vectors[id]
@@ -182,20 +267,21 @@ func (pq *PQIVFIndex) BulkAdd(vectors map[int][]float32) error {
 		}
 
 		pq.pendingVectors[id] = vector
-		err := bar.Add(1)
-		if err != nil {
-			return err
-		}
 	}
 	pq.trained = false
 	return nil
 }
 
 // Delete removes an entry by its id, from either pending vectors or clustered data.
-func (pq *PQIVFIndex) Delete(id int) error {
+func (pq *Index) Delete(id int) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
+	return pq.deleteLocked(id)
+}
 
+// deleteLocked removes an entry by its id, from either pending vectors or
+// clustered data. The caller must hold the mutex.
+func (pq *Index) deleteLocked(id int) error {
 	// If the vector is in the pending list, remove it from there.
 	if _, exists := pq.pendingVectors[id]; exists {
 		delete(pq.pendingVectors, id)
@@ -235,40 +321,25 @@ func (pq *PQIVFIndex) Delete(id int) error {
 }
 
 // BulkDelete removes multiple entries from the index.
-func (pq *PQIVFIndex) BulkDelete(ids []int) error {
+func (pq *Index) BulkDelete(ids []int) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
 	sort.Ints(ids)
-	bar := progressbar.NewOptions(len(ids),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
 	updatedClusters := make(map[int]bool)
 	for _, id := range ids {
 		// If in pending, just delete.
 		if _, exists := pq.pendingVectors[id]; exists {
 			delete(pq.pendingVectors, id)
-			err := bar.Add(1)
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		// Otherwise, find in clusters.
 		cluster, exists := pq.idToCluster[id]
 		if !exists {
-			err := bar.Add(1)
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		entries, ok := pq.invertedLists[cluster]
 		if !ok {
-			err := bar.Add(1)
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		var newEntries []pqEntry
@@ -284,10 +355,6 @@ func (pq *PQIVFIndex) BulkDelete(ids []int) error {
 		if len(newEntries) > 0 {
 			updatedClusters[cluster] = true
 		}
-		err := bar.Add(1)
-		if err != nil {
-			return err
-		}
 	}
 	for cluster := range updatedClusters {
 		pq.recalcCentroid(cluster)
@@ -296,45 +363,68 @@ func (pq *PQIVFIndex) BulkDelete(ids []int) error {
 	return nil
 }
 
-// Update removes and then re-adds an entry with an updated vector.
-func (pq *PQIVFIndex) Update(id int, vector []float32) error {
-	if err := pq.Delete(id); err != nil {
-		return err
+// validateVector checks that a vector is compatible with the index
+// dimension. The caller must hold the mutex.
+func (pq *Index) validateVector(vector []float32) error {
+	if pq.dimension == 0 {
+		return fmt.Errorf("cannot add to a zero-dimension index")
 	}
-	if err := pq.Add(id, vector); err != nil {
-		return err
+	if len(vector) != pq.dimension {
+		return fmt.Errorf("vector dimension %d does not match index dimension %d", len(vector), pq.dimension)
 	}
-	pq.trained = false
 	return nil
 }
 
-// BulkUpdate updates multiple entries with new vectors.
-func (pq *PQIVFIndex) BulkUpdate(updates map[int][]float32) error {
+// Update removes and then re-adds an entry with an updated vector as one
+// critical section, so no other operation can observe or interleave with
+// the intermediate deleted state. The new vector is validated before the
+// delete, so a failed update leaves the index unchanged.
+func (pq *Index) Update(id int, vector []float32) error {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+
+	if err := pq.validateVector(vector); err != nil {
+		return err
+	}
+	if err := pq.deleteLocked(id); err != nil {
+		return err
+	}
+	return pq.addLocked(id, vector)
+}
+
+// BulkUpdate updates multiple entries with new vectors as one critical
+// section, so no other operation can interleave with the batch.
+// All vectors are validated before any entry is touched, so a
+// dimension mismatch leaves the index unchanged.
+func (pq *Index) BulkUpdate(updates map[int][]float32) error {
 	var keys []int
 	for id := range updates {
 		keys = append(keys, id)
 	}
 	sort.Ints(keys)
-	// Create a progress bar for updates.
-	bar := progressbar.NewOptions(len(keys),
-		progressbar.OptionOnCompletion(func() { fmt.Print("\n") }),
-	)
+
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+
 	for _, id := range keys {
-		vector := updates[id]
-		if err := pq.Update(id, vector); err != nil {
+		if err := pq.validateVector(updates[id]); err != nil {
+			return fmt.Errorf("invalid vector for id %d: %w", id, err)
+		}
+	}
+
+	for _, id := range keys {
+		if err := pq.deleteLocked(id); err != nil {
 			return err
 		}
-		err := bar.Add(1)
-		if err != nil {
+		if err := pq.addLocked(id, updates[id]); err != nil {
 			return err
 		}
 	}
-	pq.trained = false
 	return nil
 }
 
 // Train builds the index structure, including coarse centroids and PQ codebooks.
-func (pq *PQIVFIndex) Train() error {
+func (pq *Index) Train() error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
@@ -436,7 +526,7 @@ func (pq *PQIVFIndex) Train() error {
 }
 
 // encodeVector computes the PQ codes for a vector given its coarse cluster.
-func (pq *PQIVFIndex) encodeVector(vector []float32, cluster int) ([]int, error) {
+func (pq *Index) encodeVector(vector []float32, cluster int) ([]int, error) {
 	if pq.codebooks == nil {
 		return nil, fmt.Errorf("codebooks not trained")
 	}
@@ -450,7 +540,7 @@ func (pq *PQIVFIndex) encodeVector(vector []float32, cluster int) ([]int, error)
 		best := -1
 		bestDist := math.MaxFloat64
 		for j, cent := range pq.codebooks[i] {
-			d, err := core.Euclidean(sub, cent)
+			d, err := core.Euclidean.Rank(sub, cent)
 			if err != nil {
 				return nil, err
 			}
@@ -468,7 +558,7 @@ func (pq *PQIVFIndex) encodeVector(vector []float32, cluster int) ([]int, error)
 }
 
 // decodePQCode reconstructs an approximate residual from the PQ codes.
-func (pq *PQIVFIndex) decodePQCode(codes []int) ([]float32, error) {
+func (pq *Index) decodePQCode(codes []int) ([]float32, error) {
 	if pq.codebooks == nil {
 		return nil, fmt.Errorf("codebooks not trained")
 	}
@@ -545,7 +635,7 @@ func runKMeans(data [][]float32, k int, iterations int) ([][]float32, error) {
 			best := -1
 			bestDist := math.MaxFloat64
 			for i, cent := range centroids {
-				d, err := core.Euclidean(point, cent)
+				d, err := core.Euclidean.Rank(point, cent)
 				if err != nil {
 					return nil, err
 				}
@@ -583,7 +673,7 @@ func runKMeans(data [][]float32, k int, iterations int) ([][]float32, error) {
 }
 
 // Search finds the k nearest neighbors for the given query vector.
-func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
+func (pq *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
 
@@ -625,8 +715,8 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 
 	// If the number of candidates is less than k, and fallback is allowed,
 	// perform a brute-force scan over all entries.
-	if len(entries) < k && pq.AllowBruteForceFallback {
-		log.Warn().Msgf("Search for k=%d yielded only %d candidates from probed clusters. Falling back to brute-force scan.", k, len(entries))
+	if len(entries) < k && pq.allowBruteForceFallback {
+		pq.fallbackSearches.Add(1)
 		var allEntries []pqEntry
 		for _, list := range pq.invertedLists {
 			allEntries = append(allEntries, list...)
@@ -635,7 +725,9 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	}
 
 	var results []core.Neighbor
-	// Compute distances for each candidate entry.
+	// Compute rank distances for each candidate entry. Rank distances order
+	// candidates exactly like true distances, so the sort below is unchanged,
+	// and only the final k results are converted to true distances.
 	for _, entry := range entries {
 		var d float64
 		var distErr error
@@ -644,26 +736,25 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 			approxResidual, err := pq.decodePQCode(entry.Codes)
 			if err != nil {
 				// Fallback to exact distance if decoding fails
-				d, distErr = pq.Distance(query, entry.Vector)
+				d, distErr = pq.metric.Rank(query, entry.Vector)
 			} else {
 				approxVec, err := vectorAdd(pq.coarseCentroids[entry.Cluster], approxResidual)
 				if err != nil {
 					// Fallback to exact distance if vector addition fails
-					d, distErr = pq.Distance(query, entry.Vector)
+					d, distErr = pq.metric.Rank(query, entry.Vector)
 				} else {
 					// Main path: use approximate distance
-					d, distErr = pq.Distance(query, approxVec)
+					d, distErr = pq.metric.Rank(query, approxVec)
 				}
 			}
 		} else {
 			// Path for entries without PQ codes or when index is not fully trained
-			d, distErr = pq.Distance(query, entry.Vector)
+			d, distErr = pq.metric.Rank(query, entry.Vector)
 		}
 
-		// Central point for handling any distance calculation error for this entry
+		// A candidate whose distance cannot be computed is skipped.
 		if distErr != nil {
-			log.Warn().Err(distErr).Msgf("Failed to compute distance for vector ID %d, skipping candidate", entry.ID)
-			continue // Skip this candidate
+			continue
 		}
 
 		results = append(results, core.Neighbor{ID: entry.ID, Distance: d})
@@ -674,11 +765,16 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	if k > len(results) {
 		k = len(results)
 	}
-	return results[:k], nil
+	results = results[:k]
+	// Convert the surviving rank distances to true distances exactly once.
+	for i := range results {
+		results[i].Distance = pq.metric.FromRank(results[i].Distance)
+	}
+	return results, nil
 }
 
 // Stats returns statistics about the index (e.g. total number of entries).
-func (pq *PQIVFIndex) Stats() core.IndexStats {
+func (pq *Index) Stats() core.IndexStats {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
 	count := len(pq.pendingVectors)
@@ -686,9 +782,10 @@ func (pq *PQIVFIndex) Stats() core.IndexStats {
 		count += len(entries)
 	}
 	return core.IndexStats{
-		Count:     count,
-		Dimension: pq.dimension,
-		Distance:  "euclidean",
+		Count:            count,
+		Dimension:        pq.dimension,
+		Distance:         pq.metric.Name(),
+		FallbackSearches: pq.fallbackSearches.Load(),
 	}
 }
 
@@ -706,10 +803,16 @@ type serializedPQIVF struct {
 	AllowBruteForceFallback bool
 	Trained                 bool
 	PendingVectors          map[int][]float32
+	FormatVersion           int
 }
 
+// formatVersion is the on-disk format version written by GobEncode. Files
+// written before the field existed decode it as zero and are accepted; files
+// written by a newer version of the format are rejected on load.
+const formatVersion = 1
+
 // GobEncode serializes the index into bytes using gob.
-func (pq *PQIVFIndex) GobEncode() ([]byte, error) {
+func (pq *Index) GobEncode() ([]byte, error) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
 	ser := serializedPQIVF{
@@ -722,9 +825,10 @@ func (pq *PQIVFIndex) GobEncode() ([]byte, error) {
 		Codebooks:               pq.codebooks,
 		PqK:                     pq.pqK,
 		KMeansIters:             pq.kMeansIters,
-		AllowBruteForceFallback: pq.AllowBruteForceFallback,
+		AllowBruteForceFallback: pq.allowBruteForceFallback,
 		Trained:                 pq.trained,
 		PendingVectors:          pq.pendingVectors,
+		FormatVersion:           formatVersion,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -735,12 +839,16 @@ func (pq *PQIVFIndex) GobEncode() ([]byte, error) {
 }
 
 // GobDecode deserializes the index from bytes using gob.
-func (pq *PQIVFIndex) GobDecode(data []byte) error {
+func (pq *Index) GobDecode(data []byte) error {
 	var ser serializedPQIVF
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&ser); err != nil {
 		return err
+	}
+	if ser.FormatVersion > formatVersion {
+		return fmt.Errorf("index file has format version %d, but this build supports up to %d",
+			ser.FormatVersion, formatVersion)
 	}
 	pq.dimension = ser.Dimension
 	pq.coarseK = ser.CoarseK
@@ -751,7 +859,7 @@ func (pq *PQIVFIndex) GobDecode(data []byte) error {
 	pq.codebooks = ser.Codebooks
 	pq.pqK = ser.PqK
 	pq.kMeansIters = ser.KMeansIters
-	pq.AllowBruteForceFallback = ser.AllowBruteForceFallback
+	pq.allowBruteForceFallback = ser.AllowBruteForceFallback
 	pq.trained = ser.Trained
 	pq.pendingVectors = ser.PendingVectors
 	if pq.pendingVectors == nil {
@@ -764,20 +872,21 @@ func (pq *PQIVFIndex) GobDecode(data []byte) error {
 			pq.idToCluster[entry.ID] = cluster
 		}
 	}
-	pq.Distance = core.Euclidean
+	pq.metric = core.Euclidean
 	return nil
 }
 
 // Save writes the index to the given writer using gob encoding.
-func (pq *PQIVFIndex) Save(w io.Writer) error {
-	pq.mu.RLock()
-	defer pq.mu.RUnlock()
+// Encoding goes through GobEncode, which takes the read lock, so Save
+// must not take the lock itself; a recursive read lock can deadlock
+// when a writer queues between the two acquisitions.
+func (pq *Index) Save(w io.Writer) error {
 	enc := gob.NewEncoder(w)
 	return enc.Encode(pq)
 }
 
 // Load reads the index from the given reader using gob decoding.
-func (pq *PQIVFIndex) Load(r io.Reader) error {
+func (pq *Index) Load(r io.Reader) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 	dec := gob.NewDecoder(r)
@@ -785,10 +894,12 @@ func (pq *PQIVFIndex) Load(r io.Reader) error {
 }
 
 // Check interface compliance.
-var _ core.Index = (*PQIVFIndex)(nil)
+var _ core.Index = (*Index)(nil)
+var _ core.BulkIndex = (*Index)(nil)
+var _ core.Trainer = (*Index)(nil)
 
 // init registers types for gob encoding.
 func init() {
-	gob.Register(&PQIVFIndex{})
+	gob.Register(&Index{})
 	gob.Register(pqEntry{})
 }

@@ -2,12 +2,26 @@ name: Run Linter Checks
 
 on:
   workflow_dispatch:
+  schedule: # Run every day at midnight (UTC)
+    - cron: '0 0 * * *'
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
     tags:
       - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -20,17 +34,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go Environment
+      - name: Set up Go environment
         uses: actions/setup-go@v5
         with:
           go-version: stable
 
-      - name: golangci-lint
+      - name: Set up golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: latest
 
-      - name: Run linters
+      - name: Run linter checks
         run: |
           make lint
         continue-on-error: false

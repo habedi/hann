@@ -81,13 +81,18 @@ coverage.html
 *.log
 template-go-project
 *.gob
+# The golden index fixtures under testdata pin the on-disk format and must be tracked
+!**/testdata/*.gob
 *.bin
 *.index
-*.pb\.gz
+*.pb.gz
 *_prof
 *_prof.go
 
 # Ignore the directories where the data for the examples is stored
 example/data/nearest-neighbors-datasets
 example/data/nearest-neighbors-datasets-large
-*_output.txt
+.codex
+.claude/
+.agents/
+.antigravitycli/

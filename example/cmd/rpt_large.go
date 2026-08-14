@@ -4,19 +4,14 @@
 package main
 
 import (
-	"os"
+	"log"
 
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/example"
 	"github.com/habedi/hann/rpt"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func main() {
-	// Set the logger to output to the console.
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-
 	// Using RPT index with GIST dataset
 	RPTIndexGIST()
 }
@@ -24,12 +19,11 @@ func main() {
 func RPTIndexGIST() {
 	factory := func() core.Index {
 		dimension := 960
-		leafCapacity := 10
-		candidateProjections := 3
-		parallelThreshold := 100
-		probeMargin := 0.15
-		return rpt.NewRPTIndex(dimension, leafCapacity, candidateProjections, parallelThreshold,
-			probeMargin)
+		index, err := rpt.New(dimension)
+		if err != nil {
+			log.Fatalf("Failed to create RPT index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "gist-960-euclidean",

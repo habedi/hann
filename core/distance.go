@@ -1,7 +1,7 @@
 package core
 
 /*
-#cgo CFLAGS: -O2 -mavx
+#cgo CFLAGS: -O2
 #cgo LDFLAGS: -lm
 #include "simd_distance.h"
 */
@@ -11,23 +11,14 @@ import (
 	"unsafe"
 )
 
-// Distances is a map of human–readable names to distance functions.
-// You can use it to choose a distance metric by name.
-var Distances = map[string]DistanceFunc{
-	"euclidean":         Euclidean,
-	"squared_euclidean": SquaredEuclidean,
-	"manhattan":         Manhattan,
-	"cosine":            CosineDistance,
-}
-
 // DistanceFunc computes the distance between two vectors.
 // a: the first vector.
 // b: the second vector.
 // Returns the computed distance as a float64 and an error if validation fails.
 type DistanceFunc func(a, b []float32) (float64, error)
 
-// Euclidean computes the Euclidean (L2) distance between two vectors.
-func Euclidean(a, b []float32) (float64, error) {
+// euclidean computes the Euclidean (L2) distance between two vectors.
+func euclidean(a, b []float32) (float64, error) {
 	if len(a) != len(b) {
 		return 0, errors.New("vectors must have the same length")
 	}
@@ -43,8 +34,8 @@ func Euclidean(a, b []float32) (float64, error) {
 	return dist, nil
 }
 
-// SquaredEuclidean computes the squared Euclidean distance between two vectors.
-func SquaredEuclidean(a, b []float32) (float64, error) {
+// squaredEuclidean computes the squared Euclidean distance between two vectors.
+func squaredEuclidean(a, b []float32) (float64, error) {
 	if len(a) != len(b) {
 		return 0, errors.New("vectors must have the same length")
 	}
@@ -60,8 +51,8 @@ func SquaredEuclidean(a, b []float32) (float64, error) {
 	return dist, nil
 }
 
-// Manhattan computes the Manhattan (L1) distance between two vectors.
-func Manhattan(a, b []float32) (float64, error) {
+// manhattan computes the Manhattan (L1) distance between two vectors.
+func manhattan(a, b []float32) (float64, error) {
 	if len(a) != len(b) {
 		return 0, errors.New("vectors must have the same length")
 	}
@@ -77,8 +68,8 @@ func Manhattan(a, b []float32) (float64, error) {
 	return dist, nil
 }
 
-// CosineDistance computes the cosine distance between two vectors.
-func CosineDistance(a, b []float32) (float64, error) {
+// cosineDistance computes the cosine distance between two vectors.
+func cosineDistance(a, b []float32) (float64, error) {
 	if len(a) != len(b) {
 		return 0, errors.New("vectors must have the same length")
 	}

@@ -2,6 +2,7 @@ package core
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 )
 
@@ -146,6 +147,48 @@ func TestNormalizeBatchLarge(t *testing.T) {
 					idx, vec, expected)
 				break
 			}
+		}
+	}
+}
+
+// TestNormalizeDifferentialAgainstReference compares NormalizeVector, through
+// whichever SIMD variant is installed on this machine, against an independent
+// float64 reference over random vectors, sweeping the vector-lane boundaries
+// so the tail loop is covered.
+func TestNormalizeDifferentialAgainstReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(11))
+	dims := []int{1, 2, 3, 7, 8, 9, 15, 16, 17, 25, 128, 200, 784}
+	for _, dim := range dims {
+		for trial := range 5 {
+			vec := make([]float32, dim)
+			for i := range vec {
+				vec[i] = rng.Float32()*20 - 10
+			}
+			want := make([]float64, dim)
+			norm := 0.0
+			for i := range vec {
+				norm += float64(vec[i]) * float64(vec[i])
+			}
+			norm = math.Sqrt(norm)
+			for i := range vec {
+				want[i] = float64(vec[i]) / norm
+			}
+			NormalizeVector(vec)
+			for i := range vec {
+				if math.Abs(float64(vec[i])-want[i]) > 1e-4 {
+					t.Fatalf("dim %d trial %d: element %d is %v, reference %v",
+						dim, trial, i, vec[i], want[i])
+				}
+			}
+		}
+	}
+
+	// A zero vector must stay unchanged instead of dividing by zero.
+	zero := make([]float32, 9)
+	NormalizeVector(zero)
+	for i, v := range zero {
+		if v != 0 {
+			t.Fatalf("zero vector changed at element %d: %v", i, v)
 		}
 	}
 }

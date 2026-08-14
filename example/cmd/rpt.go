@@ -4,19 +4,14 @@
 package main
 
 import (
-	"os"
+	"log"
 
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/example"
 	"github.com/habedi/hann/rpt"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func main() {
-	// Set the logger to output to the console.
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-
 	// Using RPT index with FashionMNIST and SIFT datasets
 	RPTIndexFashionMNIST()
 	RPTIndexSIFT()
@@ -25,12 +20,11 @@ func main() {
 func RPTIndexFashionMNIST() {
 	factory := func() core.Index {
 		dimension := 784
-		leafCapacity := 10
-		candidateProjections := 3
-		parallelThreshold := 100
-		probeMargin := 0.15
-		return rpt.NewRPTIndex(dimension, leafCapacity, candidateProjections, parallelThreshold,
-			probeMargin)
+		index, err := rpt.New(dimension)
+		if err != nil {
+			log.Fatalf("Failed to create RPT index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "fashion-mnist-784-euclidean",
@@ -40,12 +34,11 @@ func RPTIndexFashionMNIST() {
 func RPTIndexSIFT() {
 	factory := func() core.Index {
 		dimension := 128
-		leafCapacity := 10
-		candidateProjections := 3
-		parallelThreshold := 100
-		probeMargin := 0.15
-		return rpt.NewRPTIndex(dimension, leafCapacity, candidateProjections, parallelThreshold,
-			probeMargin)
+		index, err := rpt.New(dimension)
+		if err != nil {
+			log.Fatalf("Failed to create RPT index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "sift-128-euclidean",

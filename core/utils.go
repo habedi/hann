@@ -4,22 +4,16 @@ import (
 	"os"
 	"strconv"
 	"time"
-
-	"github.com/rs/zerolog/log"
 )
 
 // GetSeed receives a seed value for random number generation from the HANN_SEED environment variable.
+// A value that does not parse as an integer is ignored, and the current time is used instead.
 func GetSeed() int64 {
 	seedStr := os.Getenv("HANN_SEED")
 	if seedStr != "" {
 		if seed, err := strconv.ParseInt(seedStr, 10, 64); err == nil {
-			log.Info().Msgf("Using seed from HANN_SEED value: %d", seed)
 			return seed
 		}
-		log.Warn().Msgf("Failed to parse HANN_SEED value: %s", seedStr)
 	}
-
-	seed := time.Now().UnixNano()
-	//log.Info().Msgf("Using current time as seed: %d", seed)
-	return seed
+	return time.Now().UnixNano()
 }

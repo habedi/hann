@@ -2,27 +2,47 @@ name: Run Tests
 
 on:
   workflow_dispatch:
+  schedule: # Run every day at midnight (UTC)
+    - cron: '0 0 * * *'
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
     tags:
       - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
         # Define the Go versions to test against
-        go-version: [ "1.21", "1.22", "1.23", "1.24" ]
+        go-version: [ "1.22", "1.23", "1.24", "1.25", "1.26" ]
+        os: [ ubuntu-latest ]
+        include:
+          # One arm64 cell on the newest Go version, so the non-AVX fallback
+          # path is exercised on hardware that actually lacks AVX.
+          - go-version: "1.26"
+            os: ubuntu-24.04-arm
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Go ${{ matrix.go-version }}
@@ -30,7 +50,7 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y make
@@ -39,7 +59,7 @@ jobs:
           CI: true
         continue-on-error: false
 
-      - name: Run Tests and Generate Coverage Report
+      - name: Run tests and generate coverage report
         run: |
           make test # Generates a coverage.txt file for Codecov
         continue-on-error: false
@@ -48,4 +68,30 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+        continue-on-error: false
+
+  tests-other-os:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        # Windows exercises the cgo build with MinGW gcc on x86_64, and
+        # macos-latest runs on Apple Silicon, so the non-AVX fallback path is
+        # exercised on darwin/arm64. These jobs call go test directly because
+        # the Makefile targets assume a Debian-based system.
+        os: [ windows-latest, macos-latest ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run tests
+        run: go test -race -count=1 ./core/ ./hnsw/ ./pqivf/ ./rpt/ ./example/
+        env:
+          HANN_LOG: "0"
         continue-on-error: false

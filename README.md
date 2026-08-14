@@ -10,7 +10,6 @@
 [![Tests](https://img.shields.io/github/actions/workflow/status/habedi/hann/tests.yml?label=tests&style=flat&labelColor=282c34&logo=github)](https://github.com/habedi/hann/actions/workflows/tests.yml)
 [![Lints](https://img.shields.io/github/actions/workflow/status/habedi/hann/lints.yml?label=lints&style=flat&labelColor=282c34&logo=github)](https://github.com/habedi/hann/actions/workflows/lints.yml)
 [![Code Coverage](https://img.shields.io/codecov/c/github/habedi/hann?label=coverage&style=flat&labelColor=282c34&logo=codecov)](https://codecov.io/gh/habedi/hann)
-[![CodeFactor](https://img.shields.io/codefactor/grade/github/habedi/hann?label=code%20quality&style=flat&labelColor=282c34&logo=codefactor)](https://www.codefactor.io/repository/github/habedi/hann)
 [![Go Reference](https://img.shields.io/badge/reference-docs-3776ab?style=flat&labelColor=282c34&logo=go)](https://pkg.go.dev/github.com/habedi/hann)
 [![License](https://img.shields.io/badge/license-MIT-00acc1?label=license&style=flat&labelColor=282c34&logo=open-source-initiative)](LICENSE)
 [![Release](https://img.shields.io/github/release/habedi/hann.svg?label=release&style=flat&labelColor=282c34&logo=github&color=f06623)](https://github.com/habedi/hann/releases/latest)
@@ -33,7 +32,7 @@ It can be used to add fast in-memory similarity search capabilities to your Go a
 
 - Unified interface for different indexes (see [core/index.go](core/index.go))
 - Support for indexing and searching vectors of arbitrary dimension
-- Fast distance computation using SIMD (AVX) instructions (see [core/simd_distance.c](core/simd_distance.c))
+- Fast distance computation using SIMD (AVX/AVX2) instructions (see [core/simd_distance.c](core/simd_distance.c))
 - Support for bulk insertion, deletion, and updates
 - Support for saving indexes to disk and loading them back
 
@@ -126,7 +125,9 @@ The index has the following configurable parameters:
 - **M**: Controls the maximum number of neighbor connections per node. Higher values improve accuracy but increase
   memory and indexing time (typical range: 5–48).
 - **Ef**: Defines search breadth during insertion and searching. Higher values improve accuracy but
-  increase computational cost for indexing and searching (typical range: 10–200).
+  increase the computational cost for indexing and searching (typical range: 10–200).
+
+An index is created with `hnsw.New(dimension, ...)`, and the parameters are set with the `hnsw.WithM`, `hnsw.WithEf`, and `hnsw.WithMetric` options.
 
 #### PQIVF Index
 
@@ -152,6 +153,10 @@ The index has the following configurable parameters:
   value: 256).
 - **kMeansIters**: Number of iterations used to train the product quantization codebooks (recommended value: 25).
 
+An index is created with `pqivf.New(dimension, ...)`, and the parameters are set with the `pqivf.WithCoarseK`,
+`pqivf.WithNumSubquantizers`, `pqivf.WithPQK`, and `pqivf.WithKMeansIters` options. The index always uses the Euclidean
+metric.
+
 #### RPT Index
 
 The [`rpt`](rpt) package provides an implementation of the RPT index introduced
@@ -170,15 +175,14 @@ The index has the following configurable parameters:
 - **probeMargin**: Margin used to determine additional branches probed during searches. Higher values improve recall but
   increase search overhead because of additional distance computations (typical range: 0.1–0.5).
 
+An index is created with `rpt.New(dimension, ...)`, and the parameters are set with the `rpt.WithLeafCapacity`,
+`rpt.WithCandidateProjections`, `rpt.WithParallelThreshold`, `rpt.WithProbeMargin`, and `rpt.WithMetric` options.
+
 #### Logging
 
-The verbosity level of logs produced by Hann can be controlled using the `HANN_LOG` environment variable.
-Possible values include:
-
-- `0`, `false`, or `off` to disable logging altogether;
-- `full` or `all` to enable full logging (`DEBUG` level);
-- Use any other value (including not setting the `HANN_LOG` environment variable) to enable basic logging (`INFO` level;
-  default behavior).
+Note that since release `0.7.0`, Hann does not support built-in logging.
+Operations report failures through returned errors, and searches that fall back to a brute-force scan are counted in the `FallbackSearches` field of
+`IndexStats`. The `HANN_LOG` environment variable is still accepted for backward compatibility, but it has no effect.
 
 #### Random Seed
 

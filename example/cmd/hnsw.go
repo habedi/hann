@@ -4,19 +4,14 @@
 package main
 
 import (
-	"os"
+	"log"
 
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/example"
 	"github.com/habedi/hann/hnsw"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func main() {
-	// Set the logger to output to the console.
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-
 	// Using HNSW index with FashionMNIST and Glove datasets
 	HNSWIndexFashionMNIST()
 	HNSWIndexGlove25()
@@ -26,10 +21,11 @@ func main() {
 func HNSWIndexFashionMNIST() {
 	factory := func() core.Index {
 		dimension := 784
-		M := 16
-		ef := 100
-		distanceName := "euclidean"
-		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
+		index, err := hnsw.New(dimension)
+		if err != nil {
+			log.Fatalf("Failed to create HNSW index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "fashion-mnist-784-euclidean",
@@ -39,10 +35,11 @@ func HNSWIndexFashionMNIST() {
 func HNSWIndexGlove25() {
 	factory := func() core.Index {
 		dimension := 25
-		M := 16
-		ef := 100
-		distanceName := "cosine"
-		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
+		index, err := hnsw.New(dimension, hnsw.WithMetric(core.Cosine))
+		if err != nil {
+			log.Fatalf("Failed to create HNSW index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "glove-25-angular",
@@ -52,10 +49,11 @@ func HNSWIndexGlove25() {
 func HNSWIndexGlove200() {
 	factory := func() core.Index {
 		dimension := 200
-		M := 16
-		ef := 100
-		distanceName := "cosine"
-		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
+		index, err := hnsw.New(dimension, hnsw.WithMetric(core.Cosine))
+		if err != nil {
+			log.Fatalf("Failed to create HNSW index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "glove-200-angular",
