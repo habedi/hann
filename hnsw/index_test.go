@@ -2,22 +2,14 @@ package hnsw_test
 
 import (
 	"bytes"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/hnsw"
 	"github.com/habedi/hann/internal/testutil"
 )
-
-var update = flag.Bool("update", false, "regenerate golden files")
 
 // newTestIndex constructs an index and fails the test when construction
 // errors, so tests with known-good parameters stay short.
@@ -300,120 +292,11 @@ func TestHNSWIndex_SaveLoad(t *testing.T) {
 	}
 }
 
-func TestHNSWIndex_ConcurrentBulkOperations(t *testing.T) {
-	dim := 6
-	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
-	numVectors := 1000
-
-	// Arrange: prepare a map of vectors.
-	vectors := make(map[int][]float32, numVectors)
-	for i := 0; i < numVectors; i++ {
-		vectors[i] = []float32{
-			float32(i),
-			float32(i + 1),
-			float32(i + 2),
-			float32(i + 3),
-			float32(i + 4),
-			float32(i + 5),
-		}
-	}
-
-	// Act: perform BulkAdd.
-	if err := index.BulkAdd(vectors); err != nil {
-		t.Fatalf("BulkAdd failed: %v", err)
-	}
-
-	// Prepare updates: update half the vectors.
-	updates := make(map[int][]float32)
-	for i := 0; i < numVectors; i += 2 {
-		updates[i] = []float32{
-			float32(i + 10),
-			float32(i + 11),
-			float32(i + 12),
-			float32(i + 13),
-			float32(i + 14),
-			float32(i + 15),
-		}
-	}
-
-	// Prepare deletions: delete one-quarter of the vectors.
-	var deleteIDs []int
-	for i := 0; i < numVectors; i += 4 {
-		deleteIDs = append(deleteIDs, i)
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		if err := index.BulkUpdate(updates); err != nil {
-			t.Errorf("BulkUpdate failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := index.BulkDelete(deleteIDs); err != nil {
-			t.Errorf("BulkDelete failed: %v", err)
-		}
-	}()
-	wg.Wait()
-
-	// Assert: final count.
-	expected := numVectors - len(deleteIDs)
-	stats := index.Stats()
-	if stats.Count != expected {
-		t.Errorf("expected count %d after concurrent bulk operations, got %d", expected,
-			stats.Count)
-	}
-}
-
 // testVector returns a 6-dimensional vector derived from i, spaced far
 // apart so that nearest-neighbor results are unambiguous.
 func testVector(i int) []float32 {
 	base := float32(i * 100)
 	return []float32{base, base + 1, base + 2, base + 3, base + 4, base + 5}
-}
-
-func TestHNSWIndex_SaveConcurrentWithAdd(t *testing.T) {
-	dim := 6
-	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
-	for i := 0; i < 100; i++ {
-		if err := index.Add(i, testVector(i)); err != nil {
-			t.Fatalf("Add failed: %v", err)
-		}
-	}
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
-				if err := index.Save(io.Discard); err != nil {
-					t.Errorf("Save failed: %v", err)
-					return
-				}
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			for i := 1000; i < 1200; i++ {
-				if err := index.Add(i, testVector(i)); err != nil {
-					t.Errorf("Add failed: %v", err)
-					return
-				}
-			}
-		}()
-		wg.Wait()
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("Save deadlocked while running concurrently with Add")
-	}
 }
 
 func TestHNSWIndex_SaveLoadEntryPointZero(t *testing.T) {
@@ -621,39 +504,6 @@ func TestHNSWIndex_DeleteAfterBulkDelete(t *testing.T) {
 	}
 }
 
-func TestHNSWIndex_BulkAddConcurrentWithAdd(t *testing.T) {
-	dim := 6
-	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
-
-	vectors := make(map[int][]float32, 100)
-	for i := 1000; i < 1100; i++ {
-		vectors[i] = testVector(i)
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		if err := index.BulkAdd(vectors); err != nil {
-			t.Errorf("BulkAdd failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 100; i++ {
-			if err := index.Add(i, testVector(i)); err != nil {
-				t.Errorf("Add failed: %v", err)
-			}
-		}
-	}()
-	wg.Wait()
-
-	stats := index.Stats()
-	if stats.Count != 200 {
-		t.Errorf("expected count 200 after concurrent BulkAdd and Add, got %d", stats.Count)
-	}
-}
-
 func TestHNSWIndex_UpdateEntryPoint(t *testing.T) {
 	dim := 6
 	// Exhaustive search keeps the exact-match assertions below free of the
@@ -792,74 +642,6 @@ func TestHNSWIndex_SearchFallbackChunking(t *testing.T) {
 	}
 }
 
-// measureMeanRecall builds indexes over clustered data with the given metric
-// and returns the mean recall at k=10 over 20 queries per build against the
-// brute-force ground truth. The graph shape depends on the package-level
-// level generator, so recall varies between builds; averaging over three
-// builds narrows the spread the assertion has to allow for.
-func measureMeanRecall(t *testing.T, metric core.Metric) float64 {
-	t.Helper()
-	const (
-		dim      = 16
-		n        = 2000
-		clusters = 16
-		q        = 20
-		k        = 10
-		builds   = 3
-	)
-	total := 0.0
-	for b := 0; b < builds; b++ {
-		dataSeed := int64(42 + 100*b)
-		data := testutil.ClusteredData(dataSeed, n, dim, clusters)
-		index := newTestIndex(t, dim, hnsw.WithM(16), hnsw.WithEf(100), hnsw.WithMetric(metric))
-		// The index normalizes cosine vectors in place, so it gets copies and
-		// the ground truth keeps the raw data.
-		vectors := make(map[int][]float32, len(data))
-		for id, vec := range data {
-			vectors[id] = testutil.CopyVector(vec)
-		}
-		if err := index.BulkAdd(vectors); err != nil {
-			t.Fatalf("BulkAdd failed: %v", err)
-		}
-		queries := testutil.Queries(dataSeed+1, data, q)
-		for _, query := range queries {
-			want, err := testutil.BruteForceKNN(query, data, k, metric)
-			if err != nil {
-				t.Fatalf("BruteForceKNN failed: %v", err)
-			}
-			got, err := index.Search(testutil.CopyVector(query), k)
-			if err != nil {
-				t.Fatalf("Search failed: %v", err)
-			}
-			total += testutil.Recall(got, want)
-		}
-	}
-	return total / float64(q*builds)
-}
-
-func TestHNSWIndex_RecallEuclidean(t *testing.T) {
-	recall := measureMeanRecall(t, core.Euclidean)
-	t.Logf("euclidean mean recall at k=10: %.4f", recall)
-	// Observed range over 40 runs: 0.64 to 0.93. The spread comes from the
-	// level generator: the level 0 graph splits into per-cluster components,
-	// so recall depends on how well the upper levels route between clusters.
-	// The threshold is a regression tripwire, not a quality goal.
-	if recall < 0.50 {
-		t.Errorf("euclidean mean recall %.4f is below the regression threshold 0.50", recall)
-	}
-}
-
-func TestHNSWIndex_RecallCosine(t *testing.T) {
-	recall := measureMeanRecall(t, core.Cosine)
-	t.Logf("cosine mean recall at k=10: %.4f", recall)
-	// Observed range over 40 runs: 0.55 to 0.92, with more spread than the
-	// euclidean variant. The threshold is a regression tripwire, not a
-	// quality goal.
-	if recall < 0.40 {
-		t.Errorf("cosine mean recall %.4f is below the regression threshold 0.40", recall)
-	}
-}
-
 // hnswFactory describes the HNSW index for the shared test runners. Search
 // sorts its candidates before returning, so results are sorted, and the
 // reported distances are computed against the stored vectors, so they are
@@ -877,164 +659,6 @@ func hnswFactory() testutil.Factory {
 		SortedResults:  true,
 		Metric:         core.Euclidean,
 	}
-}
-
-func TestHNSWIndex_PropertyOps(t *testing.T) {
-	for _, seed := range []int64{1, 2, 3, 42, 12345} {
-		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
-			testutil.RunPropertyOps(t, hnswFactory(), 16, seed, 400)
-		})
-	}
-}
-
-func TestHNSWIndex_ConcurrentOps(t *testing.T) {
-	testutil.RunConcurrentOps(t, hnswFactory(), 16, 8, 300)
-}
-
-// goldenExpected pins the observable behavior of the golden index file:
-// the stored vector count and the ids returned for three fixed queries.
-type goldenExpected struct {
-	Count     int     `json:"count"`
-	ResultIDs [][]int `json:"result_ids"`
-}
-
-// goldenData returns the deterministic vectors and queries the golden fixture
-// is built from and queried with.
-func goldenData() (map[int][]float32, [][]float32) {
-	data := testutil.ClusteredData(7, 30, 8, 4)
-	queries := testutil.Queries(8, data, 3)
-	return data, queries
-}
-
-// TestHNSWIndex_GoldenFile pins the gob on-disk format. In normal mode it
-// loads a committed fixture and checks the stats and search results against
-// the committed expectations; it must never regenerate the fixture
-// implicitly, because a fixture written by an older version has to keep
-// loading. Run with -update to rebuild the fixture after a deliberate,
-// backward-compatible format change.
-func TestHNSWIndex_GoldenFile(t *testing.T) {
-	gobPath := filepath.Join("testdata", "index_v1.gob")
-	jsonPath := filepath.Join("testdata", "index_v1_expected.json")
-	data, queries := goldenData()
-
-	if *update {
-		if err := os.MkdirAll("testdata", 0o755); err != nil {
-			t.Fatalf("failed to create testdata: %v", err)
-		}
-		index := newTestIndex(t, 8, hnsw.WithM(8), hnsw.WithEf(50))
-		// Insert id 0 first, so it can plausibly become the entry point, which
-		// is the case the HasEntryPoint flag exists for.
-		for id := 0; id < len(data); id++ {
-			if err := index.Add(id, testutil.CopyVector(data[id])); err != nil {
-				t.Fatalf("Add(%d) failed: %v", id, err)
-			}
-		}
-		if err := index.Delete(5); err != nil {
-			t.Fatalf("Delete failed: %v", err)
-		}
-		f, err := os.Create(gobPath)
-		if err != nil {
-			t.Fatalf("failed to create %s: %v", gobPath, err)
-		}
-		if err := index.Save(f); err != nil {
-			t.Fatalf("Save failed: %v", err)
-		}
-		if err := f.Close(); err != nil {
-			t.Fatalf("failed to close %s: %v", gobPath, err)
-		}
-		expected := goldenExpected{Count: index.Stats().Count}
-		for _, query := range queries {
-			neighbors, err := index.Search(testutil.CopyVector(query), 5)
-			if err != nil {
-				t.Fatalf("Search failed: %v", err)
-			}
-			ids := make([]int, len(neighbors))
-			for i, n := range neighbors {
-				ids[i] = n.ID
-			}
-			expected.ResultIDs = append(expected.ResultIDs, ids)
-		}
-		out, err := json.MarshalIndent(expected, "", "  ")
-		if err != nil {
-			t.Fatalf("failed to marshal expectations: %v", err)
-		}
-		if err := os.WriteFile(jsonPath, append(out, '\n'), 0o644); err != nil {
-			t.Fatalf("failed to write %s: %v", jsonPath, err)
-		}
-		t.Logf("regenerated %s and %s", gobPath, jsonPath)
-		return
-	}
-
-	raw, err := os.ReadFile(jsonPath)
-	if err != nil {
-		t.Fatalf("failed to read %s (run with -update to generate it): %v", jsonPath, err)
-	}
-	var expected goldenExpected
-	if err := json.Unmarshal(raw, &expected); err != nil {
-		t.Fatalf("failed to parse %s: %v", jsonPath, err)
-	}
-	f, err := os.Open(gobPath)
-	if err != nil {
-		t.Fatalf("failed to open %s (run with -update to generate it): %v", gobPath, err)
-	}
-	defer f.Close()
-	loaded := newTestIndex(t, 8, hnsw.WithM(8), hnsw.WithEf(50))
-	if err := loaded.Load(f); err != nil {
-		t.Fatalf("Load failed on the golden fixture: %v", err)
-	}
-	if got := loaded.Stats().Count; got != expected.Count {
-		t.Errorf("Stats().Count = %d after loading the golden fixture, want %d", got, expected.Count)
-	}
-	for qi, query := range queries {
-		neighbors, err := loaded.Search(testutil.CopyVector(query), 5)
-		if err != nil {
-			t.Fatalf("Search failed on the loaded golden fixture: %v", err)
-		}
-		ids := make([]int, len(neighbors))
-		for i, n := range neighbors {
-			ids[i] = n.ID
-		}
-		want := expected.ResultIDs[qi]
-		if len(ids) != len(want) {
-			t.Errorf("query %d returned ids %v, want %v", qi, ids, want)
-			continue
-		}
-		for i := range ids {
-			if ids[i] != want[i] {
-				t.Errorf("query %d returned ids %v, want %v", qi, ids, want)
-				break
-			}
-		}
-	}
-}
-
-// TestHNSWIndex_DifferentialExact compares complete searches against brute
-// force for both supported distances; with k equal to the index size the
-// result must be the exact ranking.
-func TestHNSWIndex_DifferentialExact(t *testing.T) {
-	for _, metric := range []core.Metric{core.Euclidean, core.Cosine} {
-		t.Run(metric.Name(), func(t *testing.T) {
-			factory := testutil.Factory{
-				New: func() core.Index {
-					index, err := hnsw.New(16, hnsw.WithM(16), hnsw.WithEf(100), hnsw.WithMetric(metric))
-					if err != nil {
-						panic(fmt.Sprintf("hnsw.New failed: %v", err))
-					}
-					return index
-				},
-				ExactDistances: true,
-				SortedResults:  true,
-				Metric:         metric,
-			}
-			testutil.RunExactDifferential(t, factory, 16, 300, 10)
-		})
-	}
-}
-
-// TestHNSWIndex_DifferentialBulkSequential compares an index built through
-// Add and Delete with one built through BulkAdd and BulkDelete.
-func TestHNSWIndex_DifferentialBulkSequential(t *testing.T) {
-	testutil.RunBulkSequentialDifferential(t, hnswFactory(), 16, 300, 10)
 }
 
 // TestHNSWIndex_FallbackSearchCounter checks that a search that falls back to

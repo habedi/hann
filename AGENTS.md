@@ -184,6 +184,9 @@ so the failure is captured before it disappears.
 
 - Unit tests live in `_test.go` files alongside the package they cover. The index packages are tested from outside (`package hnsw_test`), so the tests
   exercise the exported surface the same way a user does.
+- Each index package splits its tests into five files by kind, and a new test belongs in the matching file: `index_test.go` for behavioral unit tests
+  and shared helpers, `quality_test.go` for recall and differential tests, `concurrency_test.go` for stress and race tests, `property_test.go` for
+  property-based tests, and `golden_test.go` for the golden fixture test and the `-update` flag.
 - Every new exported function or behavior change must ship with at least one test that exercises it, including error paths where applicable.
 - Test the interface, not the internals. An index test asserts on `Search` results, on `Stats`, and on returned errors, not on the shape of the graph
   or the tree.
