@@ -978,3 +978,41 @@ func TestHNSWIndex_GoldenFile(t *testing.T) {
 		}
 	}
 }
+
+// TestHNSWIndex_DifferentialExact compares complete searches against brute
+// force for both supported distances; with k equal to the index size the
+// result must be the exact ranking.
+func TestHNSWIndex_DifferentialExact(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+	}{
+		{"euclidean"},
+		{"cosine"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			factory := testutil.Factory{
+				New: func() core.Index {
+					return hnsw.NewHNSW(16, 16, 100, core.Distances[tc.name], tc.name)
+				},
+				ExactDistances: true,
+				SortedResults:  true,
+				Distance:       core.Distances[tc.name],
+			}
+			testutil.RunExactDifferential(t, factory, 16, 300, 10)
+		})
+	}
+}
+
+// TestHNSWIndex_DifferentialBulkSequential compares an index built through
+// Add and Delete with one built through BulkAdd and BulkDelete.
+func TestHNSWIndex_DifferentialBulkSequential(t *testing.T) {
+	factory := testutil.Factory{
+		New: func() core.Index {
+			return hnsw.NewHNSW(16, 16, 100, core.Euclidean, "euclidean")
+		},
+		ExactDistances: true,
+		SortedResults:  true,
+		Distance:       core.Euclidean,
+	}
+	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
+}

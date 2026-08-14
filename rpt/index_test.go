@@ -803,3 +803,33 @@ func TestRPTIndex_ConstructorValidation(t *testing.T) {
 		rpt.NewRPTIndex(4, 4, 0, 100, 0.1)
 	})
 }
+
+// TestRPTIndex_DifferentialExact compares complete searches against brute
+// force; with k equal to the index size the result must be the exact ranking.
+func TestRPTIndex_DifferentialExact(t *testing.T) {
+	factory := testutil.Factory{
+		New: func() core.Index {
+			return rpt.NewRPTIndex(16, defaultLeafCapacity, defaultCandidateProjections,
+				defaultParallelThreshold, defaultProbeMargin)
+		},
+		ExactDistances: true,
+		SortedResults:  true,
+		Distance:       core.Euclidean,
+	}
+	testutil.RunExactDifferential(t, factory, 16, 300, 10)
+}
+
+// TestRPTIndex_DifferentialBulkSequential compares an index built through Add
+// and Delete with one built through BulkAdd and BulkDelete.
+func TestRPTIndex_DifferentialBulkSequential(t *testing.T) {
+	factory := testutil.Factory{
+		New: func() core.Index {
+			return rpt.NewRPTIndex(16, defaultLeafCapacity, defaultCandidateProjections,
+				defaultParallelThreshold, defaultProbeMargin)
+		},
+		ExactDistances: true,
+		SortedResults:  true,
+		Distance:       core.Euclidean,
+	}
+	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
+}

@@ -762,3 +762,23 @@ func TestPQIVF_GoldenFile(t *testing.T) {
 		}
 	}
 }
+
+// TestPQIVF_DifferentialBulkSequential compares an index built through Add
+// and Delete with one built through BulkAdd and BulkDelete. Distances are
+// quantized and the two indexes train independently, so only the id sets and
+// the counts are compared, not the rankings.
+func TestPQIVF_DifferentialBulkSequential(t *testing.T) {
+	factory := testutil.Factory{
+		New: func() core.Index {
+			return pqivf.NewPQIVFIndex(16, 4, 2, 8, 10)
+		},
+		Train: func(idx core.Index) error {
+			return idx.(*pqivf.PQIVFIndex).Train()
+		},
+		MinTrainSize:   4,
+		ExactDistances: false,
+		SortedResults:  true,
+		Distance:       core.Euclidean,
+	}
+	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
+}

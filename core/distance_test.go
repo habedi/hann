@@ -2,6 +2,7 @@ package core
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 )
 
@@ -149,5 +150,88 @@ func TestDistanceFunctionsErrors(t *testing.T) {
 				t.Errorf("Expected an error but got nil")
 			}
 		})
+	}
+}
+
+// referenceDistance computes a distance in float64 arithmetic, independently
+// of the C implementations, for differential testing. The zero-norm and
+// clamping behavior mirrors the documented behavior of the cosine kernel.
+func referenceDistance(name string, a, b []float32) float64 {
+	switch name {
+	case "euclidean":
+		return math.Sqrt(referenceDistance("squared_euclidean", a, b))
+	case "squared_euclidean":
+		sum := 0.0
+		for i := range a {
+			d := float64(a[i]) - float64(b[i])
+			sum += d * d
+		}
+		return sum
+	case "manhattan":
+		sum := 0.0
+		for i := range a {
+			sum += math.Abs(float64(a[i]) - float64(b[i]))
+		}
+		return sum
+	case "cosine":
+		dot, normA, normB := 0.0, 0.0, 0.0
+		for i := range a {
+			dot += float64(a[i]) * float64(b[i])
+			normA += float64(a[i]) * float64(a[i])
+			normB += float64(b[i]) * float64(b[i])
+		}
+		if normA == 0 || normB == 0 {
+			return 1.0
+		}
+		sim := dot / (math.Sqrt(normA) * math.Sqrt(normB))
+		if sim > 1 {
+			sim = 1
+		}
+		if sim < -1 {
+			sim = -1
+		}
+		return 1.0 - sim
+	}
+	panic("unknown distance name " + name)
+}
+
+// TestDistanceDifferentialAgainstReference compares every distance function,
+// through whichever SIMD variant is installed on this machine, against an
+// independent float64 reference over random vectors. The dimensions sweep the
+// vector-lane boundaries so the tail loops of the SIMD variants are covered.
+func TestDistanceDifferentialAgainstReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	dims := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 17, 25, 31, 32, 33, 128, 200, 784}
+	for name, fn := range Distances {
+		for _, dim := range dims {
+			for trial := 0; trial < 5; trial++ {
+				a := make([]float32, dim)
+				b := make([]float32, dim)
+				for i := 0; i < dim; i++ {
+					a[i] = rng.Float32()*20 - 10
+					b[i] = rng.Float32()*20 - 10
+				}
+				got, err := fn(a, b)
+				if err != nil {
+					t.Fatalf("%s dim %d: unexpected error: %v", name, dim, err)
+				}
+				want := referenceDistance(name, a, b)
+				tol := 1e-3 * math.Max(1, math.Abs(want))
+				if math.Abs(got-want) > tol {
+					t.Errorf("%s dim %d trial %d: got %v, reference %v", name, dim, trial, got, want)
+				}
+			}
+		}
+	}
+
+	// The zero-vector operand is the documented cosine edge case.
+	zero := make([]float32, 8)
+	other := []float32{1, 2, 3, 4, 5, 6, 7, 8}
+	got, err := CosineDistance(zero, other)
+	if err != nil {
+		t.Fatalf("cosine with zero vector: unexpected error: %v", err)
+	}
+	if got != 1.0 {
+		t.Errorf("cosine with zero vector: got %v, want 1.0", got)
 	}
 }
