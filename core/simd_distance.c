@@ -87,6 +87,14 @@ float squared_euclidean_avx2(const float* a, const float* b, size_t n) { return 
 float cosine_distance_avx2(const float* a, const float* b, size_t n) { return cosine_distance_avx(a, b, n); }
 #endif
 
+#ifdef HANN_HAVE_NEON
+// NEON instantiations. NEON is a baseline feature of aarch64, so they compile
+// whenever the target is arm64, and hann_cpu_init installs them there.
+#define HANN_EMIT_MANHATTAN 1
+#include "simd_kernels_neon.inc.h"
+#undef HANN_EMIT_MANHATTAN
+#endif
+
 #undef HANN_EMIT_DISTANCE
 
 // The Manhattan kernel accumulates absolute differences, which has no
@@ -99,6 +107,14 @@ float manhattan_avx2(const float* a, const float* b, size_t n) {
 
 void init_distance_functions(int support_level) {
     switch (support_level) {
+#ifdef HANN_HAVE_NEON
+        case 3: // NEON
+            simd_euclidean_ptr = euclidean_neon;
+            simd_squared_euclidean_ptr = squared_euclidean_neon;
+            simd_manhattan_ptr = manhattan_neon;
+            simd_cosine_distance_ptr = cosine_distance_neon;
+            break;
+#endif
         case 2: // AVX2
             simd_euclidean_ptr = euclidean_avx2;
             simd_squared_euclidean_ptr = squared_euclidean_avx2;

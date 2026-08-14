@@ -1,7 +1,8 @@
 // simd_isa.h declares the per-function target attribute macros and the helpers shared by every SIMD kernel
 // instantiation. The AVX variants are compiled with a per-function target attribute instead of a package-wide
 // -mavx flag, so the fallback functions and the dispatch code never contain AVX instructions and stay safe on
-// CPUs without AVX.
+// CPUs without AVX. NEON is a baseline feature of aarch64, so the NEON variants need no target attribute, only
+// the architecture guard.
 #ifndef SIMD_ISA_H
 #define SIMD_ISA_H
 
@@ -11,6 +12,11 @@
 #include <immintrin.h>
 #define HANN_TARGET_AVX __attribute__((target("avx")))
 #define HANN_TARGET_AVX2 __attribute__((target("avx2,fma")))
+#endif
+
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#define HANN_HAVE_NEON 1
 #endif
 
 // HANN_FN expands a kernel base name into its per-ISA name by appending the HANN_SUFFIX defined by the current

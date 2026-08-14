@@ -47,10 +47,21 @@ void normalize_avx2(float *vec, size_t len) {
 }
 #endif
 
+#ifdef HANN_HAVE_NEON
+// NEON instantiation. NEON is a baseline feature of aarch64, so it compiles
+// whenever the target is arm64, and hann_cpu_init installs it there.
+#include "simd_kernels_neon.inc.h"
+#endif
+
 #undef HANN_EMIT_NORMALIZE
 
 void hann_cpu_init(int support_level) {
     switch (support_level) {
+#ifdef HANN_HAVE_NEON
+        case 3: // NEON
+            simd_normalize_ptr = normalize_neon;
+            break;
+#endif
         case 2: // AVX2
             simd_normalize_ptr = normalize_avx2;
             break;

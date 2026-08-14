@@ -1,15 +1,17 @@
 // simd_kernels.inc.h holds the vector body of every SIMD kernel, written
 // once against a small macro vocabulary and instantiated per ISA by a
-// wrapper file (simd_kernels_avx.inc.h and simd_kernels_avx2.inc.h) that
-// defines the vocabulary and then includes this file. cgo compiles every .c
-// file in the package directory, so the kernel bodies live here instead of
-// in a .c file. The .inc.h suffix marks the file as a textual include while
+// wrapper file (simd_kernels_avx.inc.h, simd_kernels_avx2.inc.h, and
+// simd_kernels_neon.inc.h) that defines the vocabulary and then includes
+// this file. cgo compiles every .c file in the package directory, so the
+// kernel bodies live here instead of in a .c file. The .inc.h suffix marks the file as a textual include while
 // keeping the .h extension the Go build cache tracks.
 //
 // The vocabulary an instantiation must define before including this file:
 //
 //   HANN_SUFFIX          the ISA name appended to each kernel, such as avx
-//   HANN_TARGET          the per-function target attribute for the ISA
+//   HANN_TARGET          the per-function target attribute for the ISA, or
+//                        empty for an ISA that is a baseline feature of the
+//                        architecture, such as NEON on aarch64
 //   HANN_UNROLL          independent accumulator chains in the main loop,
 //                        1 or 4
 //   HANN_VEC             the vector type
@@ -28,10 +30,9 @@
 //   HANN_ABS(v)          lanewise absolute value
 //   HANN_REDUCE(v)       the horizontal sum of v as a float
 //
-// The vocabulary is sufficient for a future NEON instantiation: define
-// HANN_VEC as float32x4_t and HANN_LANES as 4, map the operations to the
-// vld1q_f32 family, and use vfmaq_f32 for HANN_FMA, vabsq_f32 for HANN_ABS,
-// and vaddvq_f32 for HANN_REDUCE.
+// The NEON instantiation defines HANN_VEC as float32x4_t and HANN_LANES as
+// 4, maps the operations to the vld1q_f32 family, and uses vfmaq_f32 for
+// HANN_FMA, vabsq_f32 for HANN_ABS, and vaddvq_f32 for HANN_REDUCE.
 //
 // The including .c file selects the kernels to emit:
 //

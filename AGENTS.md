@@ -67,12 +67,12 @@ Hann is a public Go module that other programs import. The following must stay b
 ## Repository Layout
 
 - `core/`: the shared interface and helpers. `index.go` declares `Index`, the optional `BulkIndex` and `Trainer` interfaces, `Neighbor`, and
-  `IndexStats`; `distance.go` wraps the C distance functions; `metric.go` declares `Metric` and the metric registry; `vector_ops.go` holds normalization, single and batched; `cpu_check.go` detects AVX and AVX2 at startup and tells
+  `IndexStats`; `distance.go` wraps the C distance functions; `metric.go` declares `Metric` and the metric registry; `vector_ops.go` holds normalization, single and batched; `cpu_check.go` detects AVX and AVX2 on x86, selects NEON on arm64, and tells
   the C side which implementation to install; `utils.go` reads `HANN_SEED`.
 - `core/*.c` and `core/*.h`: the C implementations. `simd_distance.c` holds Euclidean, squared Euclidean, Manhattan, and cosine distance; `simd_ops.c`
-  holds normalization and the `hann_cpu_init` entry point. Each function has a fallback, an AVX, and an AVX2 variant, selected once through a function
-  pointer. The vector bodies are written once in `simd_kernels.inc.h` against a macro vocabulary, `simd_kernels_avx.inc.h` and
-  `simd_kernels_avx2.inc.h` instantiate them per ISA, and `simd_isa.h` declares the target attribute macros and the shared reduction helper.
+  holds normalization and the `hann_cpu_init` entry point. Each function has a fallback variant, AVX and AVX2 variants on x86_64, and a NEON variant on arm64, selected once
+  through a function pointer. The vector bodies are written once in `simd_kernels.inc.h` against a macro vocabulary, `simd_kernels_avx.inc.h`,
+  `simd_kernels_avx2.inc.h`, and `simd_kernels_neon.inc.h` instantiate them per ISA, and `simd_isa.h` declares the target attribute macros and the shared reduction helper.
 - `hnsw/index.go`: the HNSW graph index, its layered neighbor lists, and its gob codec.
 - `pqivf/index.go`: the PQIVF index, coarse clustering, product quantization, and `Train`.
 - `rpt/index.go`: the RPT index and its random projection tree.
@@ -115,11 +115,13 @@ Hann is organized into three layers that should not have upward dependencies:
 - Check for an empty slice before taking the address of its first element, and check that both operands have the same length before the call. The C
   side trusts the length it is given.
 - Do not retain a Go pointer on the C side. Every call reads or writes the vector and returns.
-- A new distance function needs a scalar fallback, a kernel body in `simd_kernels.inc.h` whose instantiations provide the AVX and AVX2 variants, an
+- A new distance function needs a scalar fallback, a kernel body in `simd_kernels.inc.h` whose instantiations provide the AVX, AVX2, and NEON
+  variants, an
   entry in the function pointer table in `init_distance_functions`, a declaration in the header, and a `core.Metric` value pre-registered in
   `core/metric.go`.
 - The AVX variants carry per-function target attributes behind the `HANN_TARGET_AVX` macro and are selected at runtime by `hann_cpu_init`. A machine
-  without AVX must still build and run through the fallback path, which is why no `-m` ISA flag may appear in the cgo CFLAGS.
+  without AVX must still build and run through the fallback path, which is why no `-m` ISA flag may appear in the cgo CFLAGS. The NEON variants
+  compile behind the architecture guard alone, because every arm64 CPU has NEON, and `hann_cpu_init` installs them unconditionally on arm64.
 - `NormalizeBatch` fans out over a worker pool, so each worker must own its own vector. Do not share a slice between tasks.
 
 ### Persistence
@@ -210,7 +212,7 @@ Before coding:
 
 1. Packages affected by the change (`core`, `hnsw`, `pqivf`, `rpt`, or `example`).
 2. Whether the change alters the `core.Index` interface, an exported signature, or the gob format.
-3. Whether the change touches C code, and if so, whether every one of the fallback, AVX, and AVX2 paths was updated.
+3. Whether the change touches C code, and if so, whether every one of the fallback, AVX, AVX2, and NEON paths was updated.
 4. Whether a new external dependency is required, and if so, whether it has been discussed.
 5. Whether the change affects recall or query latency, and how that will be measured.
 
