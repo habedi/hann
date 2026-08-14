@@ -69,3 +69,29 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
         continue-on-error: false
+
+  tests-other-os:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        # Windows exercises the cgo build with MinGW gcc on x86_64, and
+        # macos-latest runs on Apple Silicon, so the non-AVX fallback path is
+        # exercised on darwin/arm64. These jobs call go test directly because
+        # the Makefile targets assume a Debian-based system.
+        os: [ windows-latest, macos-latest ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run tests
+        run: go test -race -count=1 ./core/ ./hnsw/ ./pqivf/ ./rpt/ ./example/
+        env:
+          HANN_LOG: "0"
+        continue-on-error: false
