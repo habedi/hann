@@ -10,6 +10,7 @@
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 #include <immintrin.h>
 #define HANN_TARGET_AVX __attribute__((target("avx")))
+#define HANN_TARGET_AVX2 __attribute__((target("avx2,fma")))
 #endif
 
 // Function pointers for distance functions
@@ -178,17 +179,37 @@ float manhattan_avx(const float* a, const float* b, size_t n) { return manhattan
 float cosine_distance_avx(const float* a, const float* b, size_t n) { return cosine_distance_fallback(a, b, n); }
 #endif
 
-#if defined(__AVX2__) && defined(__FMA__)
+#ifdef HANN_TARGET_AVX2
+// AVX2 implementations. The multiply-add accumulations use FMA, so the
+// target attribute enables both avx2 and fma, and hann_cpu_init selects
+// this tier only when the CPU reports both features. Each accumulation
+// runs over four independent accumulators, because a single accumulator
+// chains every fmadd through the previous one and the loop then runs at
+// FMA latency instead of FMA throughput.
+HANN_TARGET_AVX2
 float euclidean_avx2(const float* a, const float* b, size_t n) {
-    __m256 sum_vec = _mm256_setzero_ps();
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+    __m256 acc2 = _mm256_setzero_ps();
+    __m256 acc3 = _mm256_setzero_ps();
     size_t i = 0;
+    size_t limit32 = n - (n % 32);
+    for (; i < limit32; i += 32) {
+        __m256 d0 = _mm256_sub_ps(_mm256_loadu_ps(a + i), _mm256_loadu_ps(b + i));
+        __m256 d1 = _mm256_sub_ps(_mm256_loadu_ps(a + i + 8), _mm256_loadu_ps(b + i + 8));
+        __m256 d2 = _mm256_sub_ps(_mm256_loadu_ps(a + i + 16), _mm256_loadu_ps(b + i + 16));
+        __m256 d3 = _mm256_sub_ps(_mm256_loadu_ps(a + i + 24), _mm256_loadu_ps(b + i + 24));
+        acc0 = _mm256_fmadd_ps(d0, d0, acc0);
+        acc1 = _mm256_fmadd_ps(d1, d1, acc1);
+        acc2 = _mm256_fmadd_ps(d2, d2, acc2);
+        acc3 = _mm256_fmadd_ps(d3, d3, acc3);
+    }
     size_t limit = n - (n % 8);
     for (; i < limit; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        __m256 diff = _mm256_sub_ps(va, vb);
-        sum_vec = _mm256_fmadd_ps(diff, diff, sum_vec);
+        __m256 d = _mm256_sub_ps(_mm256_loadu_ps(a + i), _mm256_loadu_ps(b + i));
+        acc0 = _mm256_fmadd_ps(d, d, acc0);
     }
+    __m256 sum_vec = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
     float sum = horizontal_sum256(sum_vec);
     for (; i < n; i++) {
         float diff = a[i] - b[i];
@@ -197,16 +218,30 @@ float euclidean_avx2(const float* a, const float* b, size_t n) {
     return sqrtf(sum);
 }
 
+HANN_TARGET_AVX2
 float squared_euclidean_avx2(const float* a, const float* b, size_t n) {
-    __m256 sum_vec = _mm256_setzero_ps();
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+    __m256 acc2 = _mm256_setzero_ps();
+    __m256 acc3 = _mm256_setzero_ps();
     size_t i = 0;
+    size_t limit32 = n - (n % 32);
+    for (; i < limit32; i += 32) {
+        __m256 d0 = _mm256_sub_ps(_mm256_loadu_ps(a + i), _mm256_loadu_ps(b + i));
+        __m256 d1 = _mm256_sub_ps(_mm256_loadu_ps(a + i + 8), _mm256_loadu_ps(b + i + 8));
+        __m256 d2 = _mm256_sub_ps(_mm256_loadu_ps(a + i + 16), _mm256_loadu_ps(b + i + 16));
+        __m256 d3 = _mm256_sub_ps(_mm256_loadu_ps(a + i + 24), _mm256_loadu_ps(b + i + 24));
+        acc0 = _mm256_fmadd_ps(d0, d0, acc0);
+        acc1 = _mm256_fmadd_ps(d1, d1, acc1);
+        acc2 = _mm256_fmadd_ps(d2, d2, acc2);
+        acc3 = _mm256_fmadd_ps(d3, d3, acc3);
+    }
     size_t limit = n - (n % 8);
     for (; i < limit; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        __m256 diff = _mm256_sub_ps(va, vb);
-        sum_vec = _mm256_fmadd_ps(diff, diff, sum_vec);
+        __m256 d = _mm256_sub_ps(_mm256_loadu_ps(a + i), _mm256_loadu_ps(b + i));
+        acc0 = _mm256_fmadd_ps(d, d, acc0);
     }
+    __m256 sum_vec = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
     float sum = horizontal_sum256(sum_vec);
     for (; i < n; i++) {
         float diff = a[i] - b[i];
@@ -215,23 +250,56 @@ float squared_euclidean_avx2(const float* a, const float* b, size_t n) {
     return sum;
 }
 
+// The Manhattan kernel accumulates absolute differences, which has no
+// multiply-add shape for FMA to improve, so the AVX2 tier reuses the AVX
+// variant.
 float manhattan_avx2(const float* a, const float* b, size_t n) {
     return manhattan_avx(a, b, n);
 }
 
+HANN_TARGET_AVX2
 float cosine_distance_avx2(const float* a, const float* b, size_t n) {
-    __m256 dot_vec = _mm256_setzero_ps();
-    __m256 norm_a_vec = _mm256_setzero_ps();
-    __m256 norm_b_vec = _mm256_setzero_ps();
+    __m256 dot0 = _mm256_setzero_ps(), dot1 = _mm256_setzero_ps();
+    __m256 dot2 = _mm256_setzero_ps(), dot3 = _mm256_setzero_ps();
+    __m256 na0 = _mm256_setzero_ps(), na1 = _mm256_setzero_ps();
+    __m256 na2 = _mm256_setzero_ps(), na3 = _mm256_setzero_ps();
+    __m256 nb0 = _mm256_setzero_ps(), nb1 = _mm256_setzero_ps();
+    __m256 nb2 = _mm256_setzero_ps(), nb3 = _mm256_setzero_ps();
     size_t i = 0;
+    size_t limit32 = n - (n % 32);
+    for (; i < limit32; i += 32) {
+        __m256 va0 = _mm256_loadu_ps(a + i);
+        __m256 vb0 = _mm256_loadu_ps(b + i);
+        dot0 = _mm256_fmadd_ps(va0, vb0, dot0);
+        na0 = _mm256_fmadd_ps(va0, va0, na0);
+        nb0 = _mm256_fmadd_ps(vb0, vb0, nb0);
+        __m256 va1 = _mm256_loadu_ps(a + i + 8);
+        __m256 vb1 = _mm256_loadu_ps(b + i + 8);
+        dot1 = _mm256_fmadd_ps(va1, vb1, dot1);
+        na1 = _mm256_fmadd_ps(va1, va1, na1);
+        nb1 = _mm256_fmadd_ps(vb1, vb1, nb1);
+        __m256 va2 = _mm256_loadu_ps(a + i + 16);
+        __m256 vb2 = _mm256_loadu_ps(b + i + 16);
+        dot2 = _mm256_fmadd_ps(va2, vb2, dot2);
+        na2 = _mm256_fmadd_ps(va2, va2, na2);
+        nb2 = _mm256_fmadd_ps(vb2, vb2, nb2);
+        __m256 va3 = _mm256_loadu_ps(a + i + 24);
+        __m256 vb3 = _mm256_loadu_ps(b + i + 24);
+        dot3 = _mm256_fmadd_ps(va3, vb3, dot3);
+        na3 = _mm256_fmadd_ps(va3, va3, na3);
+        nb3 = _mm256_fmadd_ps(vb3, vb3, nb3);
+    }
     size_t limit = n - (n % 8);
     for (; i < limit; i += 8) {
         __m256 va = _mm256_loadu_ps(a + i);
         __m256 vb = _mm256_loadu_ps(b + i);
-        dot_vec = _mm256_fmadd_ps(va, vb, dot_vec);
-        norm_a_vec = _mm256_fmadd_ps(va, va, norm_a_vec);
-        norm_b_vec = _mm256_fmadd_ps(vb, vb, norm_b_vec);
+        dot0 = _mm256_fmadd_ps(va, vb, dot0);
+        na0 = _mm256_fmadd_ps(va, va, na0);
+        nb0 = _mm256_fmadd_ps(vb, vb, nb0);
     }
+    __m256 dot_vec = _mm256_add_ps(_mm256_add_ps(dot0, dot1), _mm256_add_ps(dot2, dot3));
+    __m256 norm_a_vec = _mm256_add_ps(_mm256_add_ps(na0, na1), _mm256_add_ps(na2, na3));
+    __m256 norm_b_vec = _mm256_add_ps(_mm256_add_ps(nb0, nb1), _mm256_add_ps(nb2, nb3));
     float dot = horizontal_sum256(dot_vec);
     float norm_a = horizontal_sum256(norm_a_vec);
     float norm_b = horizontal_sum256(norm_b_vec);

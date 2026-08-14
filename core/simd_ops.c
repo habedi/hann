@@ -10,6 +10,7 @@
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 #include <immintrin.h>
 #define HANN_TARGET_AVX __attribute__((target("avx")))
+#define HANN_TARGET_AVX2 __attribute__((target("avx2,fma")))
 #endif
 
 // Function pointer for the normalization function
@@ -75,15 +76,37 @@ void normalize_avx(float *vec, size_t len) {
 #endif
 
 // AVX2 implementation for normalization
-#if defined(__AVX2__) && defined(__FMA__)
+#ifdef HANN_TARGET_AVX2
+// The squared-norm accumulation uses FMA, so the target attribute enables
+// both avx2 and fma, and hann_cpu_init selects this tier only when the CPU
+// reports both features.
+// The squared-norm accumulation runs over four independent accumulators,
+// because a single accumulator chains every fmadd through the previous one
+// and the loop then runs at FMA latency instead of FMA throughput.
+HANN_TARGET_AVX2
 void normalize_avx2(float *vec, size_t len) {
-    __m256 sum = _mm256_setzero_ps();
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+    __m256 acc2 = _mm256_setzero_ps();
+    __m256 acc3 = _mm256_setzero_ps();
     size_t i = 0;
+    size_t limit32 = len - (len % 32);
+    for (; i < limit32; i += 32) {
+        __m256 v0 = _mm256_loadu_ps(&vec[i]);
+        __m256 v1 = _mm256_loadu_ps(&vec[i + 8]);
+        __m256 v2 = _mm256_loadu_ps(&vec[i + 16]);
+        __m256 v3 = _mm256_loadu_ps(&vec[i + 24]);
+        acc0 = _mm256_fmadd_ps(v0, v0, acc0);
+        acc1 = _mm256_fmadd_ps(v1, v1, acc1);
+        acc2 = _mm256_fmadd_ps(v2, v2, acc2);
+        acc3 = _mm256_fmadd_ps(v3, v3, acc3);
+    }
     size_t limit = len - (len % 8);
     for (; i < limit; i += 8) {
         __m256 v = _mm256_loadu_ps(&vec[i]);
-        sum = _mm256_fmadd_ps(v, v, sum);
+        acc0 = _mm256_fmadd_ps(v, v, acc0);
     }
+    __m256 sum = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
     float total = horizontal_sum256(sum);
     for (; i < len; i++) {
         total += vec[i] * vec[i];

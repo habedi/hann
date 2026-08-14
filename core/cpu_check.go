@@ -23,9 +23,10 @@ const (
 
 var supportedCPUFeature = Fallback
 
-// init checks for CPU support for AVX and AVX2, then initializes the C library with the detected support level.
+// init checks for CPU support for AVX, AVX2, and FMA, then initializes the C library with the detected support level.
+// The AVX2 variants use FMA instructions, so the AVX2 level requires both features.
 func init() {
-	if cpu.X86.HasAVX2 {
+	if cpu.X86.HasAVX2 && cpu.X86.HasFMA {
 		supportedCPUFeature = AVX2
 	} else if cpu.X86.HasAVX {
 		supportedCPUFeature = AVX
