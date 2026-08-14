@@ -1,0 +1,11 @@
+# Minimum Recall@100 per index and dataset, checked nightly by recall.yml.
+# The floors sit well below the observed values (5 queries per dataset is noisy), so only real regressions trip them.
+# Observed on 2026-08-14, after the neighbor-selection heuristic: hnsw 0.99, 0.83, and 0.39; pqivf 0.64 to 0.68 and
+# 0.32 to 0.42; rpt 1.00 and 1.00.
+hnsw fashion-mnist-784-euclidean 0.90
+hnsw glove-25-angular 0.70
+hnsw glove-200-angular 0.25
+pqivf fashion-mnist-784-euclidean 0.50
+pqivf sift-128-euclidean 0.20
+rpt fashion-mnist-784-euclidean 0.90
+rpt sift-128-euclidean 0.90

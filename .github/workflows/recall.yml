@@ -1,0 +1,55 @@
+name: Nightly Recall Checks
+
+on:
+  workflow_dispatch:
+  schedule: # Run every night at 02:00 (UTC)
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  recall:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+
+    env:
+      # A fixed seed keeps the index builds reproducible between runs.
+      HANN_SEED: "33"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Restore the datasets
+        id: datasets
+        uses: actions/cache@v4
+        with:
+          path: example/data/nearest-neighbors-datasets
+          key: datasets-${{ hashFiles('example/data/download_datasets.sh') }}
+
+      - name: Download the datasets
+        if: steps.datasets.outputs.cache-hit != 'true'
+        run: |
+          pip install --upgrade "huggingface_hub[cli]"
+          make download-data
+
+      - name: Run the HNSW examples
+        run: go run example/cmd/hnsw.go 2>&1 | tee "$RUNNER_TEMP/hnsw.log"
+
+      - name: Run the PQIVF examples
+        run: go run example/cmd/pqivf.go 2>&1 | tee "$RUNNER_TEMP/pqivf.log"
+
+      - name: Run the RPT examples
+        run: go run example/cmd/rpt.go 2>&1 | tee "$RUNNER_TEMP/rpt.log"
+
+      - name: Check recall against the recorded minimums
+        run: |
+          bash example/data/check_recall.sh .github/recall-thresholds.txt hnsw "$RUNNER_TEMP/hnsw.log"
+          bash example/data/check_recall.sh .github/recall-thresholds.txt pqivf "$RUNNER_TEMP/pqivf.log"
+          bash example/data/check_recall.sh .github/recall-thresholds.txt rpt "$RUNNER_TEMP/rpt.log"
