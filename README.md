@@ -171,13 +171,9 @@ The index has the following configurable parameters:
 
 #### Logging
 
-The verbosity level of logs produced by Hann can be controlled using the `HANN_LOG` environment variable.
-Possible values include:
-
-- `0`, `false`, or `off` to disable logging altogether;
-- `full` or `all` to enable full logging (`DEBUG` level);
-- Use any other value (including not setting the `HANN_LOG` environment variable) to enable basic logging (`INFO` level;
-  default behavior).
+Hann does not log. Operations report failures through returned errors, and searches that fall back to a brute-force
+scan are counted in the `FallbackSearches` field of `IndexStats`. The `HANN_LOG` environment variable is still accepted
+for backward compatibility, but it has no effect.
 
 #### Random Seed
 

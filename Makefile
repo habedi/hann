@@ -8,7 +8,6 @@ DATA_DIR := "example/data"
 EXAMPLES_DIR := "example/cmd"
 HF_DATASET := "nearest-neighbors-datasets"
 HANN_SEED := 33
-HANN_LOG := 1
 HANN_BENCH_NTRD := 6
 REMOVABLE_FILES_AND_DIRS := *_prof *.pb.gz *.prof
 
@@ -44,7 +43,7 @@ format: ## Format Go files
 .PHONY: test
 test: format ## Run the tests
 	$(ECHO) "Running the tests..."
-	@HANN_LOG=$(HANN_LOG) $(GO) test -v --cover --coverprofile=$(COVER_PROFILE) --race --count=1 ${PACKAGES}
+	$(GO) test -v --cover --coverprofile=$(COVER_PROFILE) --race --count=1 ${PACKAGES}
 
 .PHONY: showcov
 showcov: test ## Display test coverage report
@@ -99,24 +98,24 @@ download-data-large: ## Download the large datasets used in the examples
 .PHONY: run-examples
 run-examples: format ## Run the examples
 	@echo "Running the examples..."
-	@HANN_LOG=$(HANN_LOG) HANN_SEED=$(HANN_SEED) $(GO) run $(EXAMPLES_DIR)/simple_hnsw.go
-	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/hnsw.go
-	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/pqivf.go
-	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/rpt.go
+	@HANN_SEED=$(HANN_SEED) $(GO) run $(EXAMPLES_DIR)/simple_hnsw.go
+	$(GO) run $(EXAMPLES_DIR)/hnsw.go
+	$(GO) run $(EXAMPLES_DIR)/pqivf.go
+	$(GO) run $(EXAMPLES_DIR)/rpt.go
 
 .PHONY: run-examples-large
 run-examples-large: format ## Run the examples (large datasets)
 	@echo "Running the examples that use large datasets..."
-	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/hnsw_large.go
-	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/pqivf_large.go
-	@HANN_LOG=$(HANN_LOG) $(GO) run $(EXAMPLES_DIR)/rpt_large.go
+	$(GO) run $(EXAMPLES_DIR)/hnsw_large.go
+	$(GO) run $(EXAMPLES_DIR)/pqivf_large.go
+	$(GO) run $(EXAMPLES_DIR)/rpt_large.go
 
 .PHONY: run-benches
 run-benches: format ## Run the benchmarks
 	@echo "Running the benchmarks..."
-	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_hnsw.go
-	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_pqivf.go
-	@HANN_LOG=$(HANN_LOG) HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_rpt.go
+	HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_hnsw.go
+	HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_pqivf.go
+	HANN_BENCH_NTRD=$(HANN_BENCH_NTRD) $(GO) run $(EXAMPLES_DIR)/bench_rpt.go
 
 .PHONY: setup-hooks
 setup-hooks: ## Install Git hooks (pre-commit and pre-push)

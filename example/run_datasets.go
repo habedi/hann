@@ -2,6 +2,7 @@ package example
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/pqivf"
-	"github.com/rs/zerolog/log"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -45,27 +45,27 @@ func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxRe
 	// Load training vectors and add them to the index.
 	trainingVectors, err := LoadTrainingVectors(datasetPath)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to load training vectors")
+		log.Fatalf("Failed to load training vectors: %v", err)
 	}
-	log.Info().Msgf("Loaded %d training vectors", len(trainingVectors))
+	log.Printf("Loaded %d training vectors", len(trainingVectors))
 	if err := index.BulkAdd(trainingVectors); err != nil {
-		log.Fatal().Err(err).Msg("BulkAdd failed")
+		log.Fatalf("BulkAdd failed: %v", err)
 	}
 
 	// If the index is a PQIVF index, it needs to be trained.
 	if pqIndex, ok := index.(*pqivf.PQIVFIndex); ok {
-		log.Info().Msg("Training PQIVF index...")
+		log.Println("Training PQIVF index...")
 		if err := pqIndex.Train(); err != nil {
-			log.Fatal().Err(err).Msg("PQIVF training failed")
+			log.Fatalf("PQIVF training failed: %v", err)
 		}
 	}
 
 	// Load test dataset.
 	testVectors, gtNeighbors, gtDistances, err := LoadTestDataset(datasetPath)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to load test dataset")
+		log.Fatalf("Failed to load test dataset: %v", err)
 	}
-	log.Info().Msgf("Loaded %d test vectors", len(testVectors))
+	log.Printf("Loaded %d test vectors", len(testVectors))
 
 	stats := index.Stats()
 	fmt.Printf("Indexed %d vectors (%d dimensions) in %.2fs; distance: %s\n",
@@ -83,7 +83,7 @@ func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxRe
 	if env := os.Getenv("HANN_BENCH_NTRD"); env != "" {
 		if t, err := strconv.Atoi(env); err == nil && t > 0 {
 			threads = t
-			log.Info().Msgf("Using %d threads used for benchmarking", threads)
+			log.Printf("Using %d threads used for benchmarking", threads)
 		}
 	}
 
@@ -113,7 +113,7 @@ func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxRe
 			startQuery := time.Now()
 			res, err := index.Search(query, k)
 			if err != nil {
-				log.Fatal().Err(err).Msgf("Search error on query %d", idx)
+				log.Fatalf("Search error on query %d: %v", idx, err)
 			}
 			duration := time.Since(startQuery)
 			recall := RecallAtK(res, gtNeighbors[idx], k)

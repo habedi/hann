@@ -9,9 +9,9 @@ import (
 	"math/rand"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/habedi/hann/core"
-	"github.com/rs/zerolog/log"
 )
 
 // seededRand is a global random number generator for random operations (e.g. during k-means).
@@ -29,6 +29,7 @@ type pqEntry struct {
 // PQIVFIndex is the main structure for the PQIVF index.
 type PQIVFIndex struct {
 	mu                      sync.RWMutex      // mutex for concurrent access
+	fallbackSearches        atomic.Int64      // searches that fell back to a brute-force scan
 	dimension               int               // dimension of the vectors
 	coarseK                 int               // number of coarse clusters
 	coarseCentroids         [][]float32       // centroids for coarse quantization
@@ -635,7 +636,7 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	// If the number of candidates is less than k, and fallback is allowed,
 	// perform a brute-force scan over all entries.
 	if len(entries) < k && pq.AllowBruteForceFallback {
-		log.Debug().Msgf("Search for k=%d yielded only %d candidates from probed clusters. Falling back to brute-force scan.", k, len(entries))
+		pq.fallbackSearches.Add(1)
 		var allEntries []pqEntry
 		for _, list := range pq.invertedLists {
 			allEntries = append(allEntries, list...)
@@ -669,10 +670,9 @@ func (pq *PQIVFIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 			d, distErr = pq.Distance(query, entry.Vector)
 		}
 
-		// Central point for handling any distance calculation error for this entry
+		// A candidate whose distance cannot be computed is skipped.
 		if distErr != nil {
-			log.Debug().Err(distErr).Msgf("Failed to compute distance for vector ID %d, skipping candidate", entry.ID)
-			continue // Skip this candidate
+			continue
 		}
 
 		results = append(results, core.Neighbor{ID: entry.ID, Distance: d})
@@ -695,9 +695,10 @@ func (pq *PQIVFIndex) Stats() core.IndexStats {
 		count += len(entries)
 	}
 	return core.IndexStats{
-		Count:     count,
-		Dimension: pq.dimension,
-		Distance:  "euclidean",
+		Count:            count,
+		Dimension:        pq.dimension,
+		Distance:         "euclidean",
+		FallbackSearches: pq.fallbackSearches.Load(),
 	}
 }
 

@@ -10,9 +10,9 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/habedi/hann/core"
-	"github.com/rs/zerolog/log"
 )
 
 // NewRPTIndex creates a new RPT (Random Projection Tree) index.
@@ -63,6 +63,7 @@ type treeNode struct {
 // It holds all points, the tree root, and configuration parameters.
 type RPTIndex struct {
 	mu                      sync.RWMutex      // protects concurrent access
+	fallbackSearches        atomic.Int64      // searches that fell back to a brute-force scan
 	dimension               int               // dimension of each vector
 	points                  map[int][]float32 // mapping of point id to vector
 	tree                    *treeNode         // root of the random projection tree
@@ -412,7 +413,7 @@ func (r *RPTIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 			}
 			return neighbors[:k], nil
 		}
-		log.Debug().Msgf("Search for k=%d yielded only %d candidates. Falling back to brute-force scan.", k, len(neighbors))
+		r.fallbackSearches.Add(1)
 		candidateSet := make(map[int]struct{}, len(candidateIDs))
 		for _, id := range candidateIDs {
 			candidateSet[id] = struct{}{}
@@ -540,9 +541,10 @@ func (r *RPTIndex) Stats() core.IndexStats {
 	defer r.mu.RUnlock()
 	count := len(r.points)
 	return core.IndexStats{
-		Count:     count,
-		Dimension: r.dimension,
-		Distance:  r.DistanceName,
+		Count:            count,
+		Dimension:        r.dimension,
+		Distance:         r.DistanceName,
+		FallbackSearches: r.fallbackSearches.Load(),
 	}
 }
 

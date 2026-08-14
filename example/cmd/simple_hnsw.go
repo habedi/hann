@@ -5,10 +5,8 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
-
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/hnsw"
@@ -18,9 +16,6 @@ import (
 // That's expected as the HNSW index uses none-deterministic operations (like parallel loops).
 
 func main() {
-
-	// Set the logger to output to the console.
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	// Index parameters.
 	dim := 6
@@ -48,7 +43,7 @@ func main() {
 	}
 	for id, vec := range vectors {
 		if err := index.Add(id, vec); err != nil {
-			log.Fatal().Msgf("Add failed for id %d: %v", id, err)
+			log.Fatalf("Add failed for id %d: %v", id, err)
 		}
 	}
 	fmt.Printf("Index stats after Add: %+v\n", index.Stats())
@@ -58,7 +53,7 @@ func main() {
 	fmt.Println("Searching nearest neighbors for vector:", query)
 	neighbors, err := index.Search(query, 2)
 	if err != nil {
-		log.Fatal().Msgf("Search failed: %v", err)
+		log.Fatalf("Search failed: %v", err)
 	}
 	fmt.Println("Search results:")
 	for _, n := range neighbors {
@@ -69,14 +64,14 @@ func main() {
 	fmt.Println("Updating vector with id 2...")
 	newVec := []float32{2, 2, 2, 2, 2, 2}
 	if err := index.Update(2, newVec); err != nil {
-		log.Fatal().Msgf("Update failed: %v", err)
+		log.Fatalf("Update failed: %v", err)
 	}
 	fmt.Printf("Index stats after Update: %+v\n", index.Stats())
 
 	// Delete a vector.
 	fmt.Println("Deleting vector with id 3...")
 	if err := index.Delete(3); err != nil {
-		log.Fatal().Msgf("Delete failed: %v", err)
+		log.Fatalf("Delete failed: %v", err)
 	}
 	fmt.Printf("Index stats after Delete: %+v\n", index.Stats())
 
@@ -85,10 +80,10 @@ func main() {
 	fmt.Println("Saving index to file:", filePath)
 	saveFile, err := os.Create(filePath)
 	if err != nil {
-		log.Fatal().Msgf("failed to create file: %v", err)
+		log.Fatalf("failed to create file: %v", err)
 	}
 	if err := index.Save(saveFile); err != nil {
-		log.Fatal().Msgf("Save failed: %v", err)
+		log.Fatalf("Save failed: %v", err)
 	}
 	saveFile.Close()
 
@@ -96,11 +91,11 @@ func main() {
 	fmt.Println("Loading index from file:", filePath)
 	loadFile, err := os.Open(filePath)
 	if err != nil {
-		log.Fatal().Msgf("failed to open file: %v", err)
+		log.Fatalf("failed to open file: %v", err)
 	}
 	newIndex := hnsw.NewHNSW(dim, m, ef, core.Distances[distanceName], distanceName)
 	if err := newIndex.Load(loadFile); err != nil {
-		log.Fatal().Msgf("Load failed: %v", err)
+		log.Fatalf("Load failed: %v", err)
 	}
 	loadFile.Close()
 	fmt.Printf("Index stats after Load: %+v\n", newIndex.Stats())
@@ -109,7 +104,7 @@ func main() {
 	fmt.Println("Searching in loaded index...")
 	neighbors, err = newIndex.Search(query, 2)
 	if err != nil {
-		log.Fatal().Msgf("Search in loaded index failed: %v", err)
+		log.Fatalf("Search in loaded index failed: %v", err)
 	}
 	fmt.Println("Search results from loaded index:")
 	for _, n := range neighbors {

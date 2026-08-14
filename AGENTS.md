@@ -35,7 +35,8 @@ Hann is a public Go module that other programs import. The following must stay b
   `rptSerialized` structs are the on-disk format, so fields may be added with sensible zero values, but they may not be removed, renamed, or reordered
   in meaning.
 - The keys in `core.Distances` and the names reported by `IndexStats.Distance`.
-- The environment variables `HANN_LOG`, `HANN_SEED`, and `HANN_BENCH_NTRD`, along with the values they accept.
+- The environment variables `HANN_SEED` and `HANN_BENCH_NTRD`, along with the values they accept. `HANN_LOG` is accepted and ignored,
+  because the library no longer logs.
 - The minimum Go version declared in `go.mod`. Raising it drops users, so it is a deliberate decision, not a side effect of using a newer standard
   library function.
 
@@ -67,7 +68,7 @@ Hann is a public Go module that other programs import. The following must stay b
 
 - `core/`: the shared interface and helpers. `index.go` declares `Index`, `Neighbor`, and `IndexStats`; `distance.go` wraps the C distance functions
   and exposes the `Distances` map; `vector_ops.go` holds normalization, single and batched; `cpu_check.go` detects AVX and AVX2 at startup and tells
-  the C side which implementation to install; `log_config.go` reads `HANN_LOG`; `utils.go` reads `HANN_SEED`.
+  the C side which implementation to install; `utils.go` reads `HANN_SEED`.
 - `core/*.c` and `core/*.h`: the C implementations. `simd_distance.c` holds Euclidean, squared Euclidean, Manhattan, and cosine distance; `simd_ops.c`
   holds normalization and the `hann_cpu_init` entry point. Each function has a fallback, an AVX, and an AVX2 variant, selected once through a function
   pointer.
@@ -102,8 +103,8 @@ Hann is organized into three layers that should not have upward dependencies:
   that split: a helper must not take the lock itself, and an exported method must not call another exported method of the same index while holding it.
 - Random behavior goes through the package-level `seededRand`, guarded by `seededRandMu`, so a run with `HANN_SEED` set is reproducible. Do not call
   the global `math/rand` functions, and do not create a new generator per operation.
-- Logging goes through `zerolog`, configured once in `core/log_config.go`. A library must stay quiet by default, so new log lines belong at debug
-  level unless they report a condition the caller cannot see.
+- The library does not log. Failures are reported through returned errors, and conditions the caller cannot see otherwise, such as a search falling
+  back to a brute-force scan, are counted in `IndexStats`. Do not add log lines; extend the stats instead.
 
 ### The cgo Boundary
 
@@ -133,7 +134,8 @@ backward compatibility section above before making one.
 - Naming follows Go standard conventions: `PascalCase` for exported identifiers, `camelCase` for unexported identifiers and local variables, and
   `SCREAMING_SNAKE_CASE` for top-level constants where idiomatic.
 - Errors are returned, never logged and swallowed. Wrap with context using `fmt.Errorf("…: %w", err)` so callers can use `errors.Is`/`errors.As`.
-- Use `zerolog` (already imported as `github.com/rs/zerolog/log`) for all logging; do not use `fmt.Print*` for diagnostic output.
+- The index packages and `core` must not log or print; diagnostic state belongs in returned errors and `IndexStats`. The example programs use the
+  standard library `log` package.
 - Every exported identifier carries a doc comment that starts with its name.
 
 ## Required Validation

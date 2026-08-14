@@ -833,3 +833,25 @@ func TestRPTIndex_DifferentialBulkSequential(t *testing.T) {
 	}
 	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
 }
+
+// TestRPTIndex_FallbackSearchCounter checks that a search that falls back to
+// a brute-force scan is visible in Stats.
+func TestRPTIndex_FallbackSearchCounter(t *testing.T) {
+	idx := rpt.NewRPTIndex(4, 2, 2, 100, 0.0)
+	for id := 0; id < 30; id++ {
+		vec := []float32{float32(id), float32(id + 1), float32(id + 2), float32(id + 3)}
+		if err := idx.Add(id, vec); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+	if got := idx.Stats().FallbackSearches; got != 0 {
+		t.Fatalf("expected 0 fallback searches before any search, got %d", got)
+	}
+	// A tiny leaf capacity with k close to the point count forces the fallback.
+	if _, err := idx.Search([]float32{0, 1, 2, 3}, 29); err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if got := idx.Stats().FallbackSearches; got < 1 {
+		t.Fatalf("expected at least 1 fallback search, got %d", got)
+	}
+}

@@ -1016,3 +1016,22 @@ func TestHNSWIndex_DifferentialBulkSequential(t *testing.T) {
 	}
 	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
 }
+
+// TestHNSWIndex_FallbackSearchCounter checks that a search that falls back to
+// a brute-force scan is visible in Stats.
+func TestHNSWIndex_FallbackSearchCounter(t *testing.T) {
+	index := hnsw.NewHNSW(4, 5, 10, core.Euclidean, "euclidean")
+	if err := index.Add(1, []float32{1, 2, 3, 4}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	if got := index.Stats().FallbackSearches; got != 0 {
+		t.Fatalf("expected 0 fallback searches before any search, got %d", got)
+	}
+	// k larger than the number of reachable candidates forces the fallback.
+	if _, err := index.Search([]float32{1, 2, 3, 4}, 2); err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if got := index.Stats().FallbackSearches; got < 1 {
+		t.Fatalf("expected at least 1 fallback search, got %d", got)
+	}
+}

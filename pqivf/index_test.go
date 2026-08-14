@@ -782,3 +782,29 @@ func TestPQIVF_DifferentialBulkSequential(t *testing.T) {
 	}
 	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
 }
+
+// TestPQIVF_FallbackSearchCounter checks that a search that falls back to a
+// brute-force scan is visible in Stats.
+func TestPQIVF_FallbackSearchCounter(t *testing.T) {
+	// More clusters than the search probes, so a large k cannot be satisfied
+	// from the probed clusters alone and the brute-force fallback triggers.
+	pq := pqivf.NewPQIVFIndex(4, 8, 2, 2, 5)
+	for id := 0; id < 40; id++ {
+		vec := []float32{float32(id), float32(id + 1), float32(id + 2), float32(id + 3)}
+		if err := pq.Add(id, vec); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+	if err := pq.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+	if got := pq.Stats().FallbackSearches; got != 0 {
+		t.Fatalf("expected 0 fallback searches before any search, got %d", got)
+	}
+	if _, err := pq.Search([]float32{0, 1, 2, 3}, 40); err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if got := pq.Stats().FallbackSearches; got < 1 {
+		t.Fatalf("expected at least 1 fallback search, got %d", got)
+	}
+}

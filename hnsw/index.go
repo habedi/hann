@@ -12,9 +12,9 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/habedi/hann/core"
-	"github.com/rs/zerolog/log"
 )
 
 // seededRand is a global random number generator used for level generation.
@@ -82,6 +82,7 @@ type Node struct {
 // HNSWIndex is the main structure for the HNSW graph index.
 type HNSWIndex struct {
 	Mu               sync.RWMutex  `gob:"-"` // mutex to control concurrent access
+	fallbackSearches atomic.Int64  // searches that fell back to a brute-force scan
 	Dimension        int           // dimension of the vectors
 	EntryPoint       *Node         // starting point for searches
 	MaxLevel         int           // current maximum level in the graph
@@ -96,8 +97,6 @@ type HNSWIndex struct {
 
 // NewHNSW creates a new HNSW index given the dimension, M, ef, and distance function.
 func NewHNSW(dimension int, M int, ef int, distance core.DistanceFunc, distanceName string) *HNSWIndex {
-	log.Info().Msgf("Creating new HNSW index with dimension=%d, M=%d, ef=%d, distance=%s",
-		dimension, M, ef, distanceName)
 	return &HNSWIndex{
 		Dimension:    dimension,
 		Nodes:        make(map[int]*Node),
@@ -122,7 +121,6 @@ func (h *HNSWIndex) randomLevel() int {
 	if level > maxLevelCap {
 		level = maxLevelCap
 	}
-	log.Debug().Msgf("Generated random level %d", level)
 	return level
 }
 
@@ -190,7 +188,6 @@ func (h *HNSWIndex) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(si); err != nil {
-		log.Error().Err(err).Msg("Failed to encode HNSWIndex")
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -202,7 +199,6 @@ func (h *HNSWIndex) GobDecode(data []byte) error {
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&si); err != nil {
-		log.Error().Err(err).Msg("Failed to decode HNSWIndex")
 		return err
 	}
 	if si.FormatVersion > formatVersion {
@@ -847,10 +843,7 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 	}
 	if len(candidates) < k {
 		// Use fallback to gather more candidates if needed.
-
-		// Log that fallback is triggered.
-		log.Debug().Msgf("Fallback search triggered: insufficient candidates from"+
-			" searchLayer; only %d found", len(candidates))
+		h.fallbackSearches.Add(1)
 
 		candidateIDs := make(map[int]bool)
 		for _, c := range candidates {
@@ -980,9 +973,10 @@ func (h *HNSWIndex) Stats() core.IndexStats {
 	defer h.Mu.RUnlock()
 	count := len(h.Nodes)
 	stats := core.IndexStats{
-		Count:     count,
-		Dimension: h.Dimension,
-		Distance:  h.DistanceName,
+		Count:            count,
+		Dimension:        h.Dimension,
+		Distance:         h.DistanceName,
+		FallbackSearches: h.fallbackSearches.Load(),
 	}
 	return stats
 }
@@ -995,7 +989,6 @@ func (h *HNSWIndex) Save(w io.Writer) error {
 	if err := enc.Encode(h); err != nil {
 		return err
 	}
-	log.Info().Msg("Index saved")
 	return nil
 }
 
@@ -1007,7 +1000,6 @@ func (h *HNSWIndex) Load(r io.Reader) error {
 	if err := dec.Decode(h); err != nil {
 		return err
 	}
-	log.Info().Msg("Index loaded")
 	return nil
 }
 
@@ -1020,5 +1012,4 @@ func init() {
 	gob.Register(serializedNode{})
 	gob.Register(&HNSWIndex{})
 	gob.Register(&Node{})
-	log.Debug().Msg("Registered HNSWIndex and Node types for Gob encoding")
 }

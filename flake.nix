@@ -42,10 +42,9 @@
               uv
             ];
 
-            # Keep the test runs reproducible and quiet by default. Override
-            # either one in the shell to change it.
+            # Keep the test runs reproducible by default. Override it in the
+            # shell to change it.
             HANN_SEED = "33";
-            HANN_LOG = "0";
           };
         }
       );

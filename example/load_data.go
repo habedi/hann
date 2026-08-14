@@ -4,13 +4,13 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/habedi/hann/core"
-	"github.com/rs/zerolog/log"
 )
 
 // LoadDataset loads a dataset from a directory into the given index.
@@ -25,7 +25,7 @@ func LoadDataset(index core.Index, dir string) (
 	trueDistances [][]float64,
 	err error,
 ) {
-	log.Info().Msgf("Loading dataset from directory: %s", dir)
+	log.Printf("Loading dataset from directory: %s", dir)
 
 	trainPath := filepath.Join(dir, "train.csv")
 	testPath := filepath.Join(dir, "test.csv")
@@ -33,14 +33,14 @@ func LoadDataset(index core.Index, dir string) (
 	distancesPath := filepath.Join(dir, "distances.csv")
 
 	// Load training vectors into the index.
-	log.Info().Msgf("Loading training data from: %s", trainPath)
+	log.Printf("Loading training data from: %s", trainPath)
 	if err := LoadCSV(index, trainPath, false); err != nil {
 		return nil, nil, nil,
 			fmt.Errorf("failed to load train.csv: %w", err)
 	}
 
 	// Load test vectors (not added to the index).
-	log.Info().Msgf("Loading test data from: %s", testPath)
+	log.Printf("Loading test data from: %s", testPath)
 	testVectors, err = readCSV[float32](testPath, false)
 	if err != nil {
 		return nil, nil, nil,
@@ -48,7 +48,7 @@ func LoadDataset(index core.Index, dir string) (
 	}
 
 	// Load ground-truth neighbors.
-	log.Info().Msgf("Loading ground-truth neighbors from: %s", neighborsPath)
+	log.Printf("Loading ground-truth neighbors from: %s", neighborsPath)
 	trueNeighbors, err = readCSV[int](neighborsPath, false)
 	if err != nil {
 		return nil, nil, nil,
@@ -56,20 +56,20 @@ func LoadDataset(index core.Index, dir string) (
 	}
 
 	// Load ground-truth distances.
-	log.Info().Msgf("Loading ground-truth distances from: %s", distancesPath)
+	log.Printf("Loading ground-truth distances from: %s", distancesPath)
 	trueDistances, err = readCSV[float64](distancesPath, false)
 	if err != nil {
 		return nil, nil, nil,
 			fmt.Errorf("failed to load distances.csv: %w", err)
 	}
 
-	log.Info().Msg("Dataset loaded successfully")
+	log.Println("Dataset loaded successfully")
 	return testVectors, trueNeighbors, trueDistances, nil
 }
 
 // LoadCSV reads float32 vectors from a CSV file and adds them to the index.
 func LoadCSV(index core.Index, path string, skipHeader bool) error {
-	log.Info().Msgf("Loading CSV file into index: %s", path)
+	log.Printf("Loading CSV file into index: %s", path)
 	vectors, err := readCSV[float32](path, skipHeader)
 	if err != nil {
 		return err
@@ -80,13 +80,13 @@ func LoadCSV(index core.Index, path string, skipHeader bool) error {
 			return fmt.Errorf("failed to add vector %d: %w", id, err)
 		}
 	}
-	log.Info().Msgf("Loaded %d vectors from %s", len(vectors), path)
+	log.Printf("Loaded %d vectors from %s", len(vectors), path)
 	return nil
 }
 
 // readCSV is a generic CSV reader for types: int, float32, and float64.
 func readCSV[T int | float32 | float64](path string, skipHeader bool) ([][]T, error) {
-	log.Debug().Msgf("Opening CSV file: %s", path)
+	log.Printf("Opening CSV file: %s", path)
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
@@ -119,7 +119,7 @@ func readCSV[T int | float32 | float64](path string, skipHeader bool) ([][]T, er
 		result = append(result, row)
 	}
 
-	log.Debug().Msgf("Parsed %d rows from %s", len(result), path)
+	log.Printf("Parsed %d rows from %s", len(result), path)
 	return result, nil
 }
 
@@ -146,7 +146,7 @@ func parseValue[T int | float32 | float64](s string) (T, error) {
 // It returns a map from id (row number, 0-indexed) to the vector.
 func LoadTrainingVectors(dir string) (map[int][]float32, error) {
 	trainPath := filepath.Join(dir, "train.csv")
-	log.Info().Msgf("Loading training vectors from: %s", trainPath)
+	log.Printf("Loading training vectors from: %s", trainPath)
 	// reuse generic CSV reader (no header in these CSV files)
 	vectors, err := readCSV[float32](trainPath, false)
 	if err != nil {
@@ -156,7 +156,7 @@ func LoadTrainingVectors(dir string) (map[int][]float32, error) {
 	for id, vec := range vectors {
 		m[id] = vec
 	}
-	log.Info().Msgf("Loaded %d training vectors from %s", len(m), trainPath)
+	log.Printf("Loaded %d training vectors from %s", len(m), trainPath)
 	return m, nil
 }
 
@@ -167,19 +167,19 @@ func LoadTestDataset(dir string) ([][]float32, [][]int, [][]float64, error) {
 	neighborsPath := filepath.Join(dir, "neighbors.csv")
 	distancesPath := filepath.Join(dir, "distances.csv")
 
-	log.Info().Msgf("Loading test vectors from: %s", testPath)
+	log.Printf("Loading test vectors from: %s", testPath)
 	testVectors, err := readCSV[float32](testPath, false)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to load test.csv: %w", err)
 	}
 
-	log.Info().Msgf("Loading ground-truth neighbors from: %s", neighborsPath)
+	log.Printf("Loading ground-truth neighbors from: %s", neighborsPath)
 	trueNeighbors, err := readCSV[int](neighborsPath, false)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to load neighbors.csv: %w", err)
 	}
 
-	log.Info().Msgf("Loading ground-truth distances from: %s", distancesPath)
+	log.Printf("Loading ground-truth distances from: %s", distancesPath)
 	trueDistances, err := readCSV[float64](distancesPath, false)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to load distances.csv: %w", err)

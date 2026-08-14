@@ -70,4 +70,8 @@ type IndexStats struct {
 	Count     int    // total number of indexed vectors.
 	Dimension int    // dimensionality of vectors.
 	Distance  string // name of the distance function used by the index.
+
+	// FallbackSearches is the number of searches so far that fell back to a
+	// brute-force scan because the index structure yielded too few candidates.
+	FallbackSearches int64
 }

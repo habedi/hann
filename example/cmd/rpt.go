@@ -4,19 +4,12 @@
 package main
 
 import (
-	"os"
-
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/example"
 	"github.com/habedi/hann/rpt"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func main() {
-	// Set the logger to output to the console.
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-
 	// Using RPT index with FashionMNIST and SIFT datasets
 	RPTIndexFashionMNIST()
 	RPTIndexSIFT()
