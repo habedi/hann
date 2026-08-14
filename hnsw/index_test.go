@@ -37,6 +37,7 @@ func TestHNSWIndex_NewValidation(t *testing.T) {
 		{"negative dimension", -1, nil},
 		{"M below 2", 4, []hnsw.Option{hnsw.WithM(1)}},
 		{"Ef below 1", 4, []hnsw.Option{hnsw.WithEf(0)}},
+		{"EfConstruction below 1", 4, []hnsw.Option{hnsw.WithEfConstruction(0)}},
 		{"zero metric", 4, []hnsw.Option{hnsw.WithMetric(core.Metric{})}},
 	}
 	for _, tc := range cases {

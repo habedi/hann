@@ -27,8 +27,9 @@ const maxLevelCap = 32
 
 // Default construction parameters used by New when no option overrides them.
 const (
-	defaultM  = 16
-	defaultEf = 100
+	defaultM              = 16
+	defaultEf             = 100
+	defaultEfConstruction = 200
 )
 
 // candidate represents a potential neighbor with its distance.
@@ -98,6 +99,7 @@ type Index struct {
 	nodesByLevel     map[int]map[int]struct{}
 	m                int         // maximum number of neighbors per node
 	ef               int         // search parameter controlling search depth
+	efConstruction   int         // search depth used while building the graph
 	metric           core.Metric // distance metric used by the index
 	exhaustiveSearch bool        // flag for performing exhaustive search during searchLayer
 }
@@ -115,6 +117,14 @@ func WithEf(ef int) Option {
 	return func(h *Index) { h.ef = ef }
 }
 
+// WithEfConstruction sets the search depth used while building the graph.
+// A larger value gives each new node a wider pool of candidate neighbors,
+// which improves graph quality at the cost of slower insertion. The default
+// is 200.
+func WithEfConstruction(efConstruction int) Option {
+	return func(h *Index) { h.efConstruction = efConstruction }
+}
+
 // WithMetric sets the distance metric. The default is core.Euclidean.
 func WithMetric(metric core.Metric) Option {
 	return func(h *Index) { h.metric = metric }
@@ -127,18 +137,20 @@ func WithExhaustiveSearch(on bool) Option {
 }
 
 // New creates an HNSW index for vectors of the given dimension, applying the
-// given options over the defaults: M 16, Ef 100, the Euclidean metric, and
-// exhaustive search off. It returns an error when the dimension is not
-// positive, M is below 2, Ef is below 1, or the metric is the zero value.
+// given options over the defaults: M 16, Ef 100, EfConstruction 200, the
+// Euclidean metric, and exhaustive search off. It returns an error when the
+// dimension is not positive, M is below 2, Ef is below 1, EfConstruction is
+// below 1, or the metric is the zero value.
 func New(dimension int, opts ...Option) (*Index, error) {
 	h := &Index{
-		dimension:    dimension,
-		nodes:        make(map[int]*node),
-		nodesByLevel: make(map[int]map[int]struct{}),
-		maxLevel:     -1,
-		m:            defaultM,
-		ef:           defaultEf,
-		metric:       core.Euclidean,
+		dimension:      dimension,
+		nodes:          make(map[int]*node),
+		nodesByLevel:   make(map[int]map[int]struct{}),
+		maxLevel:       -1,
+		m:              defaultM,
+		ef:             defaultEf,
+		efConstruction: defaultEfConstruction,
+		metric:         core.Euclidean,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -151,6 +163,9 @@ func New(dimension int, opts ...Option) (*Index, error) {
 	}
 	if h.ef < 1 {
 		return nil, fmt.Errorf("parameter Ef must be at least 1, got %d", h.ef)
+	}
+	if h.efConstruction < 1 {
+		return nil, fmt.Errorf("parameter EfConstruction must be at least 1, got %d", h.efConstruction)
 	}
 	if h.metric.IsZero() {
 		return nil, errors.New("metric must not be the zero value")
@@ -193,6 +208,7 @@ type serializedIndex struct {
 	ExhaustiveSearch bool                   // exhaustive layer search flag
 	HasEntryPoint    bool                   // whether EntryPoint holds a valid node id
 	FormatVersion    int                    // on-disk format version
+	EfConstruction   int                    // search depth used while building the graph
 }
 
 // formatVersion is the on-disk format version written by GobEncode. Files
@@ -214,6 +230,7 @@ func (h *Index) GobEncode() ([]byte, error) {
 		DistanceName:     h.metric.Name(),
 		ExhaustiveSearch: h.exhaustiveSearch,
 		FormatVersion:    formatVersion,
+		EfConstruction:   h.efConstruction,
 	}
 	for id, n := range h.nodes {
 		sn := serializedNode{
@@ -259,6 +276,12 @@ func (h *Index) GobDecode(data []byte) error {
 	h.ef = si.Ef
 	h.maxLevel = si.MaxLevel
 	h.exhaustiveSearch = si.ExhaustiveSearch
+	// Files written before the field existed decode it as zero; fall back to
+	// the default so later insertions search with a usable depth.
+	h.efConstruction = si.EfConstruction
+	if h.efConstruction < 1 {
+		h.efConstruction = defaultEfConstruction
+	}
 	// Restore the metric from its name. An index that was constructed with a
 	// custom metric keeps it when the name is unknown.
 	if metric, ok := core.MetricByName(si.DistanceName); ok {
@@ -319,46 +342,57 @@ func (h *Index) GobDecode(data []byte) error {
 	return nil
 }
 
-// selectM chooses the top M candidates based on distance.
-func selectM(candidates []candidate, M int) []candidate {
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].dist == candidates[j].dist {
-			return candidates[i].node.ID < candidates[j].node.ID
+// selectNeighborsHeuristic picks up to M neighbors from the candidates using
+// the neighbor selection heuristic from the HNSW paper. Candidates are
+// considered nearest first, and a candidate is selected only when it is
+// closer to the query than to every neighbor selected before it; a candidate
+// that fails the check is set aside. This keeps some links pointing across
+// sparse regions instead of piling every link into the densest cluster, which
+// is what keeps the level 0 graph connected on clustered data. Remaining
+// slots are then filled with the nearest of the set-aside candidates. The
+// candidate distances and the given distance function must both be in rank
+// space.
+func selectNeighborsHeuristic(candidates []candidate, M int, distance core.DistanceFunc) ([]candidate, error) {
+	sorted := make([]candidate, len(candidates))
+	copy(sorted, candidates)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].dist == sorted[j].dist {
+			return sorted[i].node.ID < sorted[j].node.ID
 		}
-		return candidates[i].dist < candidates[j].dist
+		return sorted[i].dist < sorted[j].dist
 	})
-	if len(candidates) > M {
-		return candidates[:M]
-	}
-	return candidates
-}
-
-// selectNodes selects up to M nodes from a list based on their distance to vec.
-func selectNodes(nodes []*node, vec []float32, M int, distance core.DistanceFunc) ([]*node, error) {
-	// Create a temporary array with nodes and their distances.
-	type nodeWithDist struct {
-		node *node
-		dist float64
-	}
-	arr := make([]nodeWithDist, len(nodes))
-	for i, n := range nodes {
-		dist, err := distance(vec, n.Vector)
-		if err != nil {
-			return nil, err
+	result := make([]candidate, 0, minInt(len(sorted), M))
+	var discarded []candidate
+	for _, e := range sorted {
+		if len(result) == M {
+			break
 		}
-		arr[i] = nodeWithDist{n, dist}
-	}
-	sort.Slice(arr, func(i, j int) bool {
-		if arr[i].dist == arr[j].dist {
-			return arr[i].node.ID < arr[j].node.ID
+		closerToQuery := true
+		for _, r := range result {
+			d, err := distance(e.node.Vector, r.node.Vector)
+			if err != nil {
+				return nil, err
+			}
+			if d <= e.dist {
+				closerToQuery = false
+				break
+			}
 		}
-		return arr[i].dist < arr[j].dist
-	})
-	selected := make([]*node, minInt(len(arr), M))
-	for i := range selected {
-		selected[i] = arr[i].node
+		if closerToQuery {
+			result = append(result, e)
+		} else {
+			discarded = append(discarded, e)
+		}
 	}
-	return selected, nil
+	// Keep pruned connections: fill the remaining slots with the nearest of
+	// the discarded candidates, which are already in nearest-first order.
+	for _, e := range discarded {
+		if len(result) == M {
+			break
+		}
+		result = append(result, e)
+	}
+	return result, nil
 }
 
 // removeFromSlice removes a target node from a slice of nodes.
@@ -387,12 +421,25 @@ func difference(a, b []*node) []*node {
 	return diff
 }
 
-// trimNeighborLinks reduces a node's neighbors at a level to the best M based on distance.
+// trimNeighborLinks reduces a node's neighbors at a level to at most M,
+// chosen by the neighbor selection heuristic over the current links.
 func trimNeighborLinks(n *node, level, M int, distance core.DistanceFunc) error {
 	original := n.Links[level]
-	trimmed, err := selectNodes(original, n.Vector, M, distance)
+	cands := make([]candidate, len(original))
+	for i, nb := range original {
+		d, err := distance(n.Vector, nb.Vector)
+		if err != nil {
+			return err
+		}
+		cands[i] = candidate{nb, d}
+	}
+	selected, err := selectNeighborsHeuristic(cands, M, distance)
 	if err != nil {
 		return err
+	}
+	trimmed := make([]*node, len(selected))
+	for i, c := range selected {
+		trimmed[i] = c.node
 	}
 	removed := difference(original, trimmed)
 	for _, r := range removed {
@@ -490,7 +537,10 @@ func (h *Index) insertNode(n *node, searchEf int) error {
 		if err != nil {
 			return err
 		}
-		selectedCands := selectM(candList, h.m)
+		selectedCands, err := selectNeighborsHeuristic(candList, h.m, h.metric.Rank)
+		if err != nil {
+			return err
+		}
 		selectedNodes := make([]*node, len(selectedCands))
 		for i, cand := range selectedCands {
 			selectedNodes[i] = cand.node
@@ -597,7 +647,7 @@ func (h *Index) Add(id int, vector []float32) error {
 		h.nodesByLevel[level] = make(map[int]struct{})
 	}
 	h.nodesByLevel[level][id] = struct{}{}
-	if err := h.insertNode(newNode, h.ef); err != nil {
+	if err := h.insertNode(newNode, h.efConstruction); err != nil {
 		delete(h.nodes, id)
 		if _, ok := h.nodesByLevel[level]; ok {
 			delete(h.nodesByLevel[level], id)
@@ -678,7 +728,7 @@ func (h *Index) Update(id int, vector []float32) error {
 		h.maxLevel = n.Level
 		return nil
 	}
-	if err := h.insertNode(n, h.ef); err != nil {
+	if err := h.insertNode(n, h.efConstruction); err != nil {
 		return err
 	}
 	return nil
@@ -726,7 +776,7 @@ func (h *Index) BulkAdd(vectors map[int][]float32) error {
 	sort.Slice(nodesSlice, func(i, j int) bool {
 		return nodesSlice[i].Level > nodesSlice[j].Level
 	})
-	bulkEf := h.ef
+	bulkEf := h.efConstruction
 
 	for _, newNode := range nodesSlice {
 		h.nodes[newNode.ID] = newNode
@@ -835,7 +885,7 @@ func (h *Index) BulkUpdate(updates map[int][]float32) error {
 			// The node is the only one in the index.
 			h.entryPoint = n
 			h.maxLevel = n.Level
-		} else if err := h.insertNode(n, h.ef); err != nil {
+		} else if err := h.insertNode(n, h.efConstruction); err != nil {
 			return err
 		}
 	}
