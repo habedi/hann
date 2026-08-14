@@ -359,8 +359,11 @@ func unionInts(a, b []int) []int {
 	return result
 }
 
-// computeDistances calculates the distance from the query to each point id in the list.
-// It does this in parallel across available CPUs.
+// computeDistances calculates the rank distance from the query to each point id
+// in the list. It does this in parallel across available CPUs. The Distance
+// fields of the returned neighbors carry rank values, which order candidates
+// exactly like true distances; Search converts the final selection to true
+// distances through the metric's FromRank before returning.
 func (r *Index) computeDistances(query []float32, ids []int) ([]core.Neighbor, error) {
 	// The tree can reference deleted ids when a delete lands between a tree
 	// rebuild and the moment the search reacquires the read lock, so drop ids
@@ -393,7 +396,7 @@ func (r *Index) computeDistances(query []float32, ids []int) ([]core.Neighbor, e
 			for j := start; j < end; j++ {
 				id := ids[j]
 				vec := r.points[id]
-				d, err := r.metric.Distance(query, vec)
+				d, err := r.metric.Rank(query, vec)
 				if err != nil {
 					errsCh <- err
 					return
@@ -468,7 +471,7 @@ func (r *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 			if k > len(neighbors) {
 				k = len(neighbors)
 			}
-			return neighbors[:k], nil
+			return r.toTrueDistances(neighbors[:k]), nil
 		}
 		r.fallbackSearches.Add(1)
 		candidateSet := make(map[int]struct{}, len(candidateIDs))
@@ -494,7 +497,17 @@ func (r *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	if k > len(neighbors) {
 		k = len(neighbors)
 	}
-	return neighbors[:k], nil
+	return r.toTrueDistances(neighbors[:k]), nil
+}
+
+// toTrueDistances converts the Distance field of each neighbor from a rank
+// value to the true distance. It is applied exactly once, to the final k
+// neighbors a search returns, so index-internal comparisons stay in rank space.
+func (r *Index) toTrueDistances(neighbors []core.Neighbor) []core.Neighbor {
+	for i := range neighbors {
+		neighbors[i].Distance = r.metric.FromRank(neighbors[i].Distance)
+	}
+	return neighbors
 }
 
 // Add inserts a new point with the given id and vector into the index.

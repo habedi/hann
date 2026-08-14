@@ -469,11 +469,11 @@ func (h *Index) insertNode(n *node, searchEf int) error {
 		for changed {
 			changed = false
 			for _, neighbor := range current.Links[L] {
-				distNeighbor, err := h.metric.Distance(n.Vector, neighbor.Vector)
+				distNeighbor, err := h.metric.Rank(n.Vector, neighbor.Vector)
 				if err != nil {
 					return err
 				}
-				distCurrent, err := h.metric.Distance(n.Vector, current.Vector)
+				distCurrent, err := h.metric.Rank(n.Vector, current.Vector)
 				if err != nil {
 					return err
 				}
@@ -486,7 +486,7 @@ func (h *Index) insertNode(n *node, searchEf int) error {
 	}
 	// For each level where the new node will be inserted.
 	for L := minInt(n.Level, h.maxLevel); L >= 0; L-- {
-		candList, err := h.searchLayer(n.Vector, current, L, searchEf, h.metric.Func())
+		candList, err := h.searchLayer(n.Vector, current, L, searchEf, h.metric.Rank)
 		if err != nil {
 			return err
 		}
@@ -504,7 +504,7 @@ func (h *Index) insertNode(n *node, searchEf int) error {
 			// the neighbor's links.
 			n.ReverseLinks[L] = append(n.ReverseLinks[L], neighbor)
 			if len(neighbor.Links[L]) > h.m {
-				if err := trimNeighborLinks(neighbor, L, h.m, h.metric.Func()); err != nil {
+				if err := trimNeighborLinks(neighbor, L, h.m, h.metric.Rank); err != nil {
 					return err
 				}
 			}
@@ -869,11 +869,11 @@ func (h *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 		for changed {
 			changed = false
 			for _, neighbor := range current.Links[L] {
-				distNeighbor, err := h.metric.Distance(query, neighbor.Vector)
+				distNeighbor, err := h.metric.Rank(query, neighbor.Vector)
 				if err != nil {
 					return nil, err
 				}
-				distCurrent, err := h.metric.Distance(query, current.Vector)
+				distCurrent, err := h.metric.Rank(query, current.Vector)
 				if err != nil {
 					return nil, err
 				}
@@ -885,7 +885,7 @@ func (h *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 		}
 	}
 	// Search in the base layer (level 0) for candidates.
-	candidates, err := h.searchLayer(query, current, 0, h.ef, h.metric.Func())
+	candidates, err := h.searchLayer(query, current, 0, h.ef, h.metric.Rank)
 	if err != nil {
 		return nil, err
 	}
@@ -921,7 +921,10 @@ func (h *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 			}
 			results := make([]core.Neighbor, k)
 			for i := 0; i < k; i++ {
-				results[i] = core.Neighbor{ID: candidates[i].node.ID, Distance: candidates[i].dist}
+				results[i] = core.Neighbor{
+					ID:       candidates[i].node.ID,
+					Distance: h.metric.FromRank(candidates[i].dist),
+				}
 			}
 			return results, nil
 		}
@@ -953,7 +956,7 @@ func (h *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 				localHeap := candidateMaxHeap{}
 				heap.Init(&localHeap)
 				for _, n := range nodesChunk {
-					d, err := h.metric.Distance(query, n.Vector)
+					d, err := h.metric.Rank(query, n.Vector)
 					if err != nil {
 						errsCh <- err
 						return
@@ -1010,7 +1013,10 @@ func (h *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	}
 	results := make([]core.Neighbor, k)
 	for i := 0; i < k; i++ {
-		results[i] = core.Neighbor{ID: candidates[i].node.ID, Distance: candidates[i].dist}
+		results[i] = core.Neighbor{
+			ID:       candidates[i].node.ID,
+			Distance: h.metric.FromRank(candidates[i].dist),
+		}
 	}
 	return results, nil
 }

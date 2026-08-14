@@ -169,7 +169,9 @@ func defaultNumSubquantizers(dimension int) int {
 	return 1
 }
 
-// nearestCentroid finds the closest coarse centroid to the vector and returns its index and distance.
+// nearestCentroid finds the closest coarse centroid to the vector and returns
+// its index and its rank distance. The distance is only used for ordering, so
+// it stays in rank space.
 func (pq *Index) nearestCentroid(vector []float32) (int, float64, error) {
 	if len(pq.coarseCentroids) == 0 {
 		return 0, 0, fmt.Errorf("no coarse centroids available")
@@ -177,7 +179,7 @@ func (pq *Index) nearestCentroid(vector []float32) (int, float64, error) {
 	best := -1
 	bestDist := math.MaxFloat64
 	for i, centroid := range pq.coarseCentroids {
-		d, err := pq.metric.Distance(vector, centroid)
+		d, err := pq.metric.Rank(vector, centroid)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -189,7 +191,9 @@ func (pq *Index) nearestCentroid(vector []float32) (int, float64, error) {
 	return best, bestDist, nil
 }
 
-// nearestCentroids returns a sorted slice of clusters with their distances to the vector.
+// nearestCentroids returns a sorted slice of clusters with their rank
+// distances to the vector. The distances are only used for ordering, so they
+// stay in rank space.
 func (pq *Index) nearestCentroids(vector []float32) ([]struct {
 	cluster int
 	dist    float64
@@ -199,7 +203,7 @@ func (pq *Index) nearestCentroids(vector []float32) ([]struct {
 		dist    float64
 	}, 0, len(pq.coarseCentroids))
 	for i, centroid := range pq.coarseCentroids {
-		d, err := pq.metric.Distance(vector, centroid)
+		d, err := pq.metric.Rank(vector, centroid)
 		if err != nil {
 			return nil, err
 		}
@@ -536,7 +540,7 @@ func (pq *Index) encodeVector(vector []float32, cluster int) ([]int, error) {
 		best := -1
 		bestDist := math.MaxFloat64
 		for j, cent := range pq.codebooks[i] {
-			d, err := core.Euclidean.Distance(sub, cent)
+			d, err := core.Euclidean.Rank(sub, cent)
 			if err != nil {
 				return nil, err
 			}
@@ -631,7 +635,7 @@ func runKMeans(data [][]float32, k int, iterations int) ([][]float32, error) {
 			best := -1
 			bestDist := math.MaxFloat64
 			for i, cent := range centroids {
-				d, err := core.Euclidean.Distance(point, cent)
+				d, err := core.Euclidean.Rank(point, cent)
 				if err != nil {
 					return nil, err
 				}
@@ -721,7 +725,9 @@ func (pq *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	}
 
 	var results []core.Neighbor
-	// Compute distances for each candidate entry.
+	// Compute rank distances for each candidate entry. Rank distances order
+	// candidates exactly like true distances, so the sort below is unchanged,
+	// and only the final k results are converted to true distances.
 	for _, entry := range entries {
 		var d float64
 		var distErr error
@@ -730,20 +736,20 @@ func (pq *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 			approxResidual, err := pq.decodePQCode(entry.Codes)
 			if err != nil {
 				// Fallback to exact distance if decoding fails
-				d, distErr = pq.metric.Distance(query, entry.Vector)
+				d, distErr = pq.metric.Rank(query, entry.Vector)
 			} else {
 				approxVec, err := vectorAdd(pq.coarseCentroids[entry.Cluster], approxResidual)
 				if err != nil {
 					// Fallback to exact distance if vector addition fails
-					d, distErr = pq.metric.Distance(query, entry.Vector)
+					d, distErr = pq.metric.Rank(query, entry.Vector)
 				} else {
 					// Main path: use approximate distance
-					d, distErr = pq.metric.Distance(query, approxVec)
+					d, distErr = pq.metric.Rank(query, approxVec)
 				}
 			}
 		} else {
 			// Path for entries without PQ codes or when index is not fully trained
-			d, distErr = pq.metric.Distance(query, entry.Vector)
+			d, distErr = pq.metric.Rank(query, entry.Vector)
 		}
 
 		// A candidate whose distance cannot be computed is skipped.
@@ -759,7 +765,12 @@ func (pq *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	if k > len(results) {
 		k = len(results)
 	}
-	return results[:k], nil
+	results = results[:k]
+	// Convert the surviving rank distances to true distances exactly once.
+	for i := range results {
+		results[i].Distance = pq.metric.FromRank(results[i].Distance)
+	}
+	return results, nil
 }
 
 // Stats returns statistics about the index (e.g. total number of entries).

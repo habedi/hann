@@ -183,3 +183,51 @@ func TestMetricAccessorsAndRegistry(t *testing.T) {
 		}
 	}
 }
+
+func TestMetricRankOrderEquivalence(t *testing.T) {
+	a := []float32{1, 2, 3, 4}
+	b := []float32{5, 1, 2, 2}
+	c := []float32{9, 9, 9, 9}
+	for _, m := range []Metric{Euclidean, SquaredEuclidean, Manhattan, Cosine} {
+		dab, err := m.Distance(a, b)
+		if err != nil {
+			t.Fatalf("%s: Distance failed: %v", m.Name(), err)
+		}
+		dac, err := m.Distance(a, c)
+		if err != nil {
+			t.Fatalf("%s: Distance failed: %v", m.Name(), err)
+		}
+		rab, err := m.Rank(a, b)
+		if err != nil {
+			t.Fatalf("%s: Rank failed: %v", m.Name(), err)
+		}
+		rac, err := m.Rank(a, c)
+		if err != nil {
+			t.Fatalf("%s: Rank failed: %v", m.Name(), err)
+		}
+		// Rank must order candidates like Distance.
+		if (dab < dac) != (rab < rac) {
+			t.Fatalf("%s: rank order diverges from distance order", m.Name())
+		}
+		// FromRank must recover the true distance.
+		if !almostEqual(m.FromRank(rab), dab, 1e-6) {
+			t.Fatalf("%s: FromRank(%v) = %v, want %v", m.Name(), rab, m.FromRank(rab), dab)
+		}
+	}
+
+	// The Euclidean rank distance is the squared distance, so it must differ
+	// from the true distance whenever the distance is not 0 or 1.
+	dist, _ := Euclidean.Distance(a, c)
+	rank, _ := Euclidean.Rank(a, c)
+	if almostEqual(dist, rank, 1e-9) {
+		t.Fatal("euclidean rank distance should be squared, not equal to the distance")
+	}
+
+	// A custom metric defaults to identity rank behavior.
+	custom := NewMetric("rank_identity", Manhattan.Func(), false)
+	d, _ := custom.Distance(a, b)
+	r, _ := custom.Rank(a, b)
+	if d != r || custom.FromRank(r) != r {
+		t.Fatal("custom metrics must default to identity rank behavior")
+	}
+}

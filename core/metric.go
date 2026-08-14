@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"sync"
 )
 
@@ -14,6 +15,8 @@ type Metric struct {
 	name      string
 	fn        DistanceFunc
 	normalize bool
+	rankFn    DistanceFunc          // order-equivalent, possibly cheaper distance
+	fromRank  func(float64) float64 // converts a rank value to the true distance
 }
 
 // NewMetric returns a metric with the given name, distance function, and
@@ -21,6 +24,26 @@ type Metric struct {
 // it must load from a saved file.
 func NewMetric(name string, fn DistanceFunc, normalize bool) Metric {
 	return Metric{name: name, fn: fn, normalize: normalize}
+}
+
+// Rank computes a distance that orders candidates exactly like Distance but
+// may be cheaper. For the Euclidean metric it is the squared Euclidean
+// distance, which skips a square root per call; for every other metric it is
+// Distance itself. Rank values from different metrics are not comparable, and
+// a rank value converts to the true distance through FromRank.
+func (m Metric) Rank(a, b []float32) (float64, error) {
+	if m.rankFn != nil {
+		return m.rankFn(a, b)
+	}
+	return m.fn(a, b)
+}
+
+// FromRank converts a value computed by Rank to the true distance.
+func (m Metric) FromRank(rank float64) float64 {
+	if m.fromRank != nil {
+		return m.fromRank(rank)
+	}
+	return rank
 }
 
 // Name returns the metric's name.
@@ -42,8 +65,10 @@ func (m Metric) IsZero() bool { return m.fn == nil }
 
 // The built-in metrics.
 var (
-	// Euclidean is the Euclidean (L2) distance.
-	Euclidean = Metric{name: "euclidean", fn: euclidean}
+	// Euclidean is the Euclidean (L2) distance. Its rank distance is the
+	// squared Euclidean distance, so index-internal comparisons skip the
+	// square root.
+	Euclidean = Metric{name: "euclidean", fn: euclidean, rankFn: squaredEuclidean, fromRank: math.Sqrt}
 	// SquaredEuclidean is the squared Euclidean distance.
 	SquaredEuclidean = Metric{name: "squared_euclidean", fn: squaredEuclidean}
 	// Manhattan is the Manhattan (L1) distance.
