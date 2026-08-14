@@ -171,9 +171,9 @@ The index has the following configurable parameters:
 
 #### Logging
 
-Hann does not log. Operations report failures through returned errors, and searches that fall back to a brute-force
-scan are counted in the `FallbackSearches` field of `IndexStats`. The `HANN_LOG` environment variable is still accepted
-for backward compatibility, but it has no effect.
+Note that since release `0.7.0`, Hann does not support built-in logging.
+Operations report failures through returned errors, and searches that fall back to a brute-force scan are counted in the `FallbackSearches` field of
+`IndexStats`. The `HANN_LOG` environment variable is still accepted for backward compatibility, but it has no effect.
 
 #### Random Seed
 
