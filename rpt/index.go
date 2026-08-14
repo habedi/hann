@@ -23,6 +23,11 @@ const (
 	defaultProbeMargin          = 0.15
 )
 
+// rebuildFloor is the minimum number of overlay entries (pending adds plus
+// stale tree references) a mutation must accumulate before the tree is
+// rebuilt. Below it, small indexes are served from the overlay alone.
+const rebuildFloor = 64
+
 // Option configures an Index created by New.
 type Option func(*Index)
 
@@ -70,7 +75,7 @@ func New(dimension int, opts ...Option) (*Index, error) {
 	r := &Index{
 		dimension:               dimension,
 		points:                  make(map[int][]float32),
-		dirty:                   true, // marks that the tree needs to be rebuilt
+		pendingAdds:             make(map[int]struct{}),
 		leafCapacity:            defaultLeafCapacity,
 		candidateProjections:    defaultCandidateProjections,
 		parallelThreshold:       defaultParallelThreshold,
@@ -119,13 +124,22 @@ type treeNode struct {
 
 // Index is the main structure for the random projection tree index.
 // It holds all points, the tree root, and configuration parameters.
+//
+// The tree is rebuilt by writers, not by searches. Mutations record their
+// effect in an overlay: pendingAdds holds ids the tree does not contain yet,
+// and staleCount counts ids the tree references whose entry in the point map
+// was removed or replaced. When the overlay grows past a threshold, the
+// mutation that crossed it rebuilds the tree while still holding the write
+// lock, which amortizes the rebuild cost across mutations and keeps Search
+// under a single read lock.
 type Index struct {
 	mu                      sync.RWMutex      // protects concurrent access
-	fallbackSearches        atomic.Int64      // searches that fell back to a brute-force scan
+	fallbackSearches        atomic.Int64      // searches that scanned all points (see Search)
 	dimension               int               // dimension of each vector
 	points                  map[int][]float32 // mapping of point id to vector
-	tree                    *treeNode         // root of the random projection tree
-	dirty                   bool              // indicates if the tree needs to be rebuilt
+	tree                    *treeNode         // root of the random projection tree, nil before the first build
+	pendingAdds             map[int]struct{}  // ids added since the tree was last built
+	staleCount              int               // ids removed or replaced that the tree may still reference
 	metric                  core.Metric       // metric used to compare vectors
 	leafCapacity            int               // maximum number of points in a leaf
 	candidateProjections    int               // number of random projections to try when splitting
@@ -291,7 +305,9 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 	}
 }
 
-// buildTree constructs the random projection tree from all stored points.
+// buildTree constructs the random projection tree from all stored points and
+// resets the overlay, since the new tree covers every stored point. The caller
+// must hold the write lock.
 func (r *Index) buildTree() {
 	// Collect all point ids.
 	ids := make([]int, 0, len(r.points))
@@ -308,7 +324,22 @@ func (r *Index) buildTree() {
 	})
 	r.tree = buildTreeRecursive(ids, r.points, r.dimension, localRand, r.leafCapacity,
 		r.candidateProjections, r.parallelThreshold)
-	r.dirty = false // tree is now up to date
+	r.pendingAdds = make(map[int]struct{})
+	r.staleCount = 0
+}
+
+// maybeRebuild rebuilds the tree when the overlay has grown past the rebuild
+// threshold: more pending adds plus stale references than the larger of
+// rebuildFloor and a quarter of the stored points. Every mutation calls it
+// before releasing the write lock, which the caller must hold.
+func (r *Index) maybeRebuild() {
+	threshold := len(r.points) / 4
+	if threshold < rebuildFloor {
+		threshold = rebuildFloor
+	}
+	if len(r.pendingAdds)+r.staleCount > threshold {
+		r.buildTree()
+	}
 }
 
 // searchTreeMultiProbeWithMargin searches the tree for candidate point ids using multi-probing.
@@ -365,8 +396,7 @@ func unionInts(a, b []int) []int {
 // exactly like true distances; Search converts the final selection to true
 // distances through the metric's FromRank before returning.
 func (r *Index) computeDistances(query []float32, ids []int) ([]core.Neighbor, error) {
-	// The tree can reference deleted ids when a delete lands between a tree
-	// rebuild and the moment the search reacquires the read lock, so drop ids
+	// The tree can reference deleted ids until the next rebuild, so drop ids
 	// that are no longer in the point map.
 	present := make([]int, 0, len(ids))
 	for _, id := range ids {
@@ -417,8 +447,11 @@ func (r *Index) computeDistances(query []float32, ids []int) ([]core.Neighbor, e
 	return neighbors, nil
 }
 
-// Search returns the k nearest neighbors to the query vector.
-// It rebuilds the tree if needed and uses multi-probe search to get candidate ids.
+// Search returns the k nearest neighbors to the query vector. It probes the
+// tree for candidate ids, merges in the ids added since the tree was last
+// built, and holds the read lock for its whole duration; rebuilding is the
+// writers' job. When the tree was never built, the search is a scan of all
+// stored points and counts as a fallback search in Stats.
 func (r *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -437,15 +470,10 @@ func (r *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	copy(queryCopy, query)
 	query = queryCopy
 
-	// If the tree is dirty, rebuild it.
-	if r.dirty {
-		r.mu.RUnlock()
-		r.mu.Lock()
-		if r.dirty {
-			r.buildTree()
-		}
-		r.mu.Unlock()
-		r.mu.RLock()
+	// A nil tree means no build has happened yet, so the pending-add overlay
+	// below covers every stored point and the search is a full scan.
+	if r.tree == nil {
+		r.fallbackSearches.Add(1)
 	}
 	// Get candidate ids using multi-probe search.
 	candidateIDs := searchTreeMultiProbeWithMargin(r.tree, query, r.dimension, r.probeMargin)
@@ -453,6 +481,15 @@ func (r *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	if len(candidateIDs) < k*2 {
 		candidateIDsAlt := searchTreeMultiProbeWithMargin(r.tree, query, r.dimension, r.probeMargin*2)
 		candidateIDs = unionInts(candidateIDs, candidateIDsAlt)
+	}
+	// Merge in the ids the tree does not contain yet. The rebuild threshold
+	// bounds their number, so this scan stays a fraction of the index.
+	if len(r.pendingAdds) > 0 {
+		pending := make([]int, 0, len(r.pendingAdds))
+		for id := range r.pendingAdds {
+			pending = append(pending, id)
+		}
+		candidateIDs = unionInts(candidateIDs, pending)
 	}
 
 	// Compute distances for candidate points. The read lock stays held so the
@@ -510,8 +547,40 @@ func (r *Index) toTrueDistances(neighbors []core.Neighbor) []core.Neighbor {
 	return neighbors
 }
 
-// Add inserts a new point with the given id and vector into the index.
-// It marks the tree as dirty so it will be rebuilt.
+// addLocked records a new id in the point map and the pending-add overlay.
+// The caller must hold the write lock.
+func (r *Index) addLocked(id int, vector []float32) {
+	r.points[id] = vector
+	r.pendingAdds[id] = struct{}{}
+}
+
+// deleteLocked removes an id from the point map and the overlay. An id the
+// tree never held leaves the overlay with it; an id the tree holds becomes a
+// stale reference. The caller must hold the write lock.
+func (r *Index) deleteLocked(id int) {
+	delete(r.points, id)
+	if _, pending := r.pendingAdds[id]; pending {
+		delete(r.pendingAdds, id)
+	} else {
+		r.staleCount++
+	}
+}
+
+// updateLocked replaces the vector of an id. When the tree holds the id, the
+// entry stays reachable by id but its placement in the tree goes stale, which
+// counts toward the rebuild threshold; a pending id is rescanned on every
+// search anyway, so it needs no bookkeeping. The caller must hold the write
+// lock.
+func (r *Index) updateLocked(id int, vector []float32) {
+	r.points[id] = vector
+	if _, pending := r.pendingAdds[id]; !pending {
+		r.staleCount++
+	}
+}
+
+// Add inserts a new point with the given id and vector into the index. The
+// point is searchable immediately through the pending-add overlay, and the
+// tree is rebuilt when the overlay grows past the rebuild threshold.
 func (r *Index) Add(id int, vector []float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -522,12 +591,13 @@ func (r *Index) Add(id int, vector []float32) error {
 	if _, exists := r.points[id]; exists {
 		return fmt.Errorf("id %d already exists", id)
 	}
-	r.points[id] = vector
-	r.dirty = true
+	r.addLocked(id, vector)
+	r.maybeRebuild()
 	return nil
 }
 
-// BulkAdd inserts multiple points into the index and marks the tree as dirty.
+// BulkAdd inserts multiple points into the index and rebuilds the tree when
+// the pending-add overlay grows past the rebuild threshold.
 func (r *Index) BulkAdd(vectors map[int][]float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -540,37 +610,43 @@ func (r *Index) BulkAdd(vectors map[int][]float32) error {
 		if _, exists := r.points[id]; exists {
 			return fmt.Errorf("id %d already exists", id)
 		}
-		r.points[id] = vector
+		r.addLocked(id, vector)
 	}
-	r.dirty = true
+	r.maybeRebuild()
 	return nil
 }
 
-// Delete removes a point by its id and marks the tree as dirty.
+// Delete removes a point by its id and rebuilds the tree when the overlay
+// grows past the rebuild threshold.
 func (r *Index) Delete(id int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.points[id]; !exists {
 		return fmt.Errorf("id %d not found", id)
 	}
-	delete(r.points, id)
-	r.dirty = true
+	r.deleteLocked(id)
+	r.maybeRebuild()
 	return nil
 }
 
-// BulkDelete removes multiple points from the index and marks the tree as dirty.
+// BulkDelete removes multiple points from the index, ignoring ids that are
+// not present, and rebuilds the tree when the overlay grows past the rebuild
+// threshold.
 func (r *Index) BulkDelete(ids []int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for _, id := range ids {
-		delete(r.points, id)
+		if _, exists := r.points[id]; exists {
+			r.deleteLocked(id)
+		}
 	}
-	r.dirty = true
+	r.maybeRebuild()
 	return nil
 }
 
-// Update changes the vector of an existing point and marks the tree as dirty.
+// Update changes the vector of an existing point and rebuilds the tree when
+// the overlay grows past the rebuild threshold.
 func (r *Index) Update(id int, vector []float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -581,12 +657,13 @@ func (r *Index) Update(id int, vector []float32) error {
 	if _, exists := r.points[id]; !exists {
 		return fmt.Errorf("id %d not found", id)
 	}
-	r.points[id] = vector
-	r.dirty = true
+	r.updateLocked(id, vector)
+	r.maybeRebuild()
 	return nil
 }
 
-// BulkUpdate updates multiple points in the index.
+// BulkUpdate updates multiple points in the index and rebuilds the tree when
+// the overlay grows past the rebuild threshold.
 func (r *Index) BulkUpdate(updates map[int][]float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -599,9 +676,9 @@ func (r *Index) BulkUpdate(updates map[int][]float32) error {
 		if _, exists := r.points[id]; !exists {
 			return fmt.Errorf("id %d not found", id)
 		}
-		r.points[id] = vector
+		r.updateLocked(id, vector)
 	}
-	r.dirty = true
+	r.maybeRebuild()
 	return nil
 }
 
@@ -685,7 +762,15 @@ func (r *Index) GobDecode(data []byte) error {
 	r.parallelThreshold = ser.ParallelThreshold
 	r.probeMargin = ser.ProbeMargin
 	r.allowBruteForceFallback = ser.AllowBruteForceFallback
-	r.dirty = true // mark tree as dirty so it will be rebuilt
+	r.pendingAdds = make(map[int]struct{})
+	r.staleCount = 0
+	r.tree = nil
+	// Build the tree now, so a loaded index searches without a first-search
+	// rebuild. The build draws its randomness from core.GetSeed here instead
+	// of at the first search, which is the same draw under HANN_SEED.
+	if len(r.points) > 0 {
+		r.buildTree()
+	}
 	return nil
 }
 

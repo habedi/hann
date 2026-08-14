@@ -321,6 +321,165 @@ func TestRPTIndex_SeedReproducibility(t *testing.T) {
 	}
 }
 
+// amortizedTestIndex builds an index whose search results depend strongly on
+// the tree structure: no probe margin and no brute-force fallback, so a
+// rebuild under a different seed is visible in the returned ids.
+func amortizedTestIndex(t *testing.T, dim, n int) *rpt.Index {
+	t.Helper()
+	idx := mustNew(t, dim,
+		rpt.WithLeafCapacity(5),
+		rpt.WithCandidateProjections(3),
+		rpt.WithParallelThreshold(1<<30),
+		rpt.WithProbeMargin(0),
+		rpt.WithBruteForceFallback(false))
+	rnd := rand.New(rand.NewSource(7))
+	for i := 0; i < n; i++ {
+		if err := idx.Add(i, makeVector(rnd, dim)); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+	}
+	return idx
+}
+
+// TestRPTIndex_AddDoesNotRebuildTree checks that a single Add on a built index
+// does not rebuild the tree, and that the added id is still findable through
+// the search path. The absence of a rebuild is observed through the seed: two
+// indexes are built identically under one HANN_SEED, then each receives the
+// same single Add and the same searches under a different HANN_SEED. A rebuild
+// would draw the new seed and produce diverging trees, so identical results
+// prove no rebuild happened.
+func TestRPTIndex_AddDoesNotRebuildTree(t *testing.T) {
+	const (
+		dim = 8
+		n   = 5000
+		k   = 5
+	)
+	added := []float32{9, 9, 9, 9, 9, 9, 9, 9}
+
+	runOne := func(postBuildSeed string) [][]int {
+		t.Setenv("HANN_SEED", "12345")
+		idx := amortizedTestIndex(t, dim, n)
+		if _, err := idx.Search(makeVector(rand.New(rand.NewSource(9)), dim), k); err != nil {
+			t.Fatalf("warm-up Search failed: %v", err)
+		}
+		t.Setenv("HANN_SEED", postBuildSeed)
+		if err := idx.Add(n, added); err != nil {
+			t.Fatalf("Add failed: %v", err)
+		}
+		// The added vector is far from the uniform data in [-1, 1], so an
+		// exact-match query must return it first.
+		got, err := idx.Search(added, 1)
+		if err != nil {
+			t.Fatalf("Search for the added vector failed: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != n {
+			t.Fatalf("Search for the added vector returned %v, want id %d first", got, n)
+		}
+		queryRnd := rand.New(rand.NewSource(11))
+		results := make([][]int, 20)
+		for q := range results {
+			neighbors, err := idx.Search(makeVector(queryRnd, dim), k)
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			ids := make([]int, len(neighbors))
+			for i, nb := range neighbors {
+				ids[i] = nb.ID
+			}
+			results[q] = ids
+		}
+		return results
+	}
+
+	a := runOne("1001")
+	b := runOne("2002")
+	for q := range a {
+		if len(a[q]) != len(b[q]) {
+			t.Fatalf("query %d: result counts differ (%d vs %d), so a rebuild drew the post-build seed",
+				q, len(a[q]), len(b[q]))
+		}
+		for i := range a[q] {
+			if a[q][i] != b[q][i] {
+				t.Fatalf("query %d result %d: ids differ (%d vs %d), so a rebuild drew the post-build seed",
+					q, i, a[q][i], b[q][i])
+			}
+		}
+	}
+}
+
+// TestRPTIndex_AmortizedRebuildCorrectness checks that repeated single
+// Add-then-Search cycles keep the index correct, both below the rebuild
+// threshold and across it: every added id is findable by an exact-match query,
+// and Stats reports the right count throughout.
+func TestRPTIndex_AmortizedRebuildCorrectness(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	const (
+		dim = 8
+		n   = 5000
+	)
+	idx := mustNew(t, dim)
+	rnd := rand.New(rand.NewSource(13))
+	initial := make(map[int][]float32, n)
+	for i := 0; i < n; i++ {
+		initial[i] = makeVector(rnd, dim)
+	}
+	if err := idx.BulkAdd(initial); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+
+	// A few single cycles, staying below the rebuild threshold.
+	for i := 0; i < 10; i++ {
+		id := n + i
+		vec := makeVector(rnd, dim)
+		if err := idx.Add(id, vec); err != nil {
+			t.Fatalf("Add(%d) failed: %v", id, err)
+		}
+		got, err := idx.Search(vec, 1)
+		if err != nil {
+			t.Fatalf("Search after Add(%d) failed: %v", id, err)
+		}
+		if len(got) != 1 || got[0].ID != id {
+			t.Fatalf("Search after Add(%d) returned %v, want the added id first", id, got)
+		}
+		if count := idx.Stats().Count; count != n+i+1 {
+			t.Fatalf("Stats().Count = %d after Add(%d), want %d", count, id, n+i+1)
+		}
+	}
+
+	// Enough further adds to cross the rebuild threshold of
+	// max(64, count/4), then the same checks on a sample of the new ids.
+	extra := make(map[int][]float32, n/2)
+	for i := 10; i < 10+n/2; i++ {
+		extra[n+i] = makeVector(rnd, dim)
+	}
+	if err := idx.BulkAdd(extra); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	total := n + 10 + n/2
+	if count := idx.Stats().Count; count != total {
+		t.Fatalf("Stats().Count = %d after BulkAdd, want %d", count, total)
+	}
+	// A complete search must reach every id exactly once, both the ids the
+	// rebuild folded into the tree and any still in the overlay.
+	all, err := idx.Search(makeVector(rnd, dim), total)
+	if err != nil {
+		t.Fatalf("complete Search failed: %v", err)
+	}
+	if len(all) != total {
+		t.Fatalf("complete Search returned %d results, want %d", len(all), total)
+	}
+	seen := make(map[int]struct{}, total)
+	for _, nb := range all {
+		if nb.ID < 0 || nb.ID >= total {
+			t.Fatalf("complete Search returned id %d, which was never added", nb.ID)
+		}
+		if _, dup := seen[nb.ID]; dup {
+			t.Fatalf("complete Search returned id %d twice", nb.ID)
+		}
+		seen[nb.ID] = struct{}{}
+	}
+}
+
 // TestRPTIndex_SaveLoadDistance checks that the configured metric name is
 // reported by Stats, survives a save and load round-trip, and that the metric
 // is restored when loading into a zero-value index.
