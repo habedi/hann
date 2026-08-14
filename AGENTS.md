@@ -71,7 +71,8 @@ Hann is a public Go module that other programs import. The following must stay b
   the C side which implementation to install; `utils.go` reads `HANN_SEED`.
 - `core/*.c` and `core/*.h`: the C implementations. `simd_distance.c` holds Euclidean, squared Euclidean, Manhattan, and cosine distance; `simd_ops.c`
   holds normalization and the `hann_cpu_init` entry point. Each function has a fallback, an AVX, and an AVX2 variant, selected once through a function
-  pointer.
+  pointer. The vector bodies are written once in `simd_kernels.inc.h` against a macro vocabulary, `simd_kernels_avx.inc.h` and
+  `simd_kernels_avx2.inc.h` instantiate them per ISA, and `simd_isa.h` declares the target attribute macros and the shared reduction helper.
 - `hnsw/index.go`: the HNSW graph index, its layered neighbor lists, and its gob codec.
 - `pqivf/index.go`: the PQIVF index, coarse clustering, product quantization, and `Train`.
 - `rpt/index.go`: the RPT index and its random projection tree.
@@ -114,8 +115,9 @@ Hann is organized into three layers that should not have upward dependencies:
 - Check for an empty slice before taking the address of its first element, and check that both operands have the same length before the call. The C
   side trusts the length it is given.
 - Do not retain a Go pointer on the C side. Every call reads or writes the vector and returns.
-- A new distance function needs the fallback, AVX, and AVX2 variants, an entry in the function pointer table in `init_distance_functions`, a
-  declaration in the header, and a `core.Metric` value pre-registered in `core/metric.go`.
+- A new distance function needs a scalar fallback, a kernel body in `simd_kernels.inc.h` whose instantiations provide the AVX and AVX2 variants, an
+  entry in the function pointer table in `init_distance_functions`, a declaration in the header, and a `core.Metric` value pre-registered in
+  `core/metric.go`.
 - The AVX variants carry per-function target attributes behind the `HANN_TARGET_AVX` macro and are selected at runtime by `hann_cpu_init`. A machine
   without AVX must still build and run through the fallback path, which is why no `-m` ISA flag may appear in the cgo CFLAGS.
 - `NormalizeBatch` fans out over a worker pool, so each worker must own its own vector. Do not share a slice between tasks.
