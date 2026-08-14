@@ -152,6 +152,7 @@ Run the relevant targets for any change:
 | Examples        | `make run-examples`        | Runs the examples that use the small datasets          |
 | Large examples  | `make run-examples-large`  | Runs the examples that use the large datasets          |
 | Benchmarks      | `make run-benches`         | Runs the local benchmarks                              |
+| Go benchmarks   | `make bench`               | Runs the Go benchmarks for the kernels and the indexes |
 | Datasets        | `make download-data`       | Downloads the datasets the examples use                |
 | Large datasets  | `make download-data-large` | Downloads the large datasets                           |
 | Git hooks       | `make setup-hooks`         | Installs the pre-commit and pre-push hooks             |
@@ -184,9 +185,9 @@ so the failure is captured before it disappears.
 
 - Unit tests live in `_test.go` files alongside the package they cover. The index packages are tested from outside (`package hnsw_test`), so the tests
   exercise the exported surface the same way a user does.
-- Each index package splits its tests into five files by kind, and a new test belongs in the matching file: `index_test.go` for behavioral unit tests
+- Each index package splits its tests into six files by kind, and a new test belongs in the matching file: `index_test.go` for behavioral unit tests
   and shared helpers, `quality_test.go` for recall and differential tests, `concurrency_test.go` for stress and race tests, `property_test.go` for
-  property-based tests, and `golden_test.go` for the golden fixture test and the `-update` flag.
+  property-based tests, `golden_test.go` for the golden fixture test and the `-update` flag, and `bench_test.go` for benchmarks.
 - Every new exported function or behavior change must ship with at least one test that exercises it, including error paths where applicable.
 - Test the interface, not the internals. An index test asserts on `Search` results, on `Stats`, and on returned errors, not on the shape of the graph
   or the tree.

@@ -50,6 +50,11 @@ showcov: test ## Display test coverage report
 	$(ECHO) "Displaying test coverage report..."
 	@$(GO) tool cover -func=$(COVER_PROFILE)
 
+.PHONY: bench
+bench: ## Run the Go benchmarks
+	$(ECHO) "Running the Go benchmarks..."
+	$(GO) test -bench=. -benchmem -run=^$$ ./core/ ./hnsw/ ./pqivf/ ./rpt/
+
 .PHONY: clean
 clean: ## Remove build artifacts and temporary files
 	$(ECHO) "Cleaning up..."
