@@ -234,14 +234,133 @@ func TestPQIVF_TrainAndSearch(t *testing.T) {
 		t.Fatalf("search on trained index failed: %v", err)
 	}
 
-	// BulkDelete should invalidate training.
+	// BulkDelete keeps the index trained and searchable.
 	if err := idx.BulkDelete([]int{1}); err != nil {
 		t.Fatalf("BulkDelete failed: %v", err)
 	}
 
-	// Search after BulkDelete should fail.
-	if _, err := idx.Search(query, 1); err == nil {
-		t.Fatal("expected search after BulkDelete to fail, but it succeeded")
+	// Search after BulkDelete succeeds, and the deleted id is gone.
+	neighbors, err := idx.Search(query, 3)
+	if err != nil {
+		t.Fatalf("search after BulkDelete failed: %v", err)
+	}
+	for _, nb := range neighbors {
+		if nb.ID == 1 {
+			t.Fatalf("deleted id 1 was returned by Search after BulkDelete")
+		}
+	}
+}
+
+// trainedIndex returns an index trained on four fixed vectors, for the tests
+// that exercise mutations after training.
+func trainedIndex(t *testing.T) *pqivf.Index {
+	t.Helper()
+	idx := newIndex(t, 6, 3, 2, 256, 10)
+	vectors := map[int][]float32{
+		1: {1, 2, 3, 4, 5, 6},
+		2: {6, 5, 4, 3, 2, 1},
+		3: {1, 1, 1, 1, 1, 1},
+		4: {9, 9, 9, 9, 9, 9},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+	return idx
+}
+
+// searchIDs returns the ids Search finds for the query, failing the test on a
+// search error.
+func searchIDs(t *testing.T, idx *pqivf.Index, query []float32, k int) map[int]bool {
+	t.Helper()
+	neighbors, err := idx.Search(query, k)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	ids := make(map[int]bool, len(neighbors))
+	for _, nb := range neighbors {
+		ids[nb.ID] = true
+	}
+	return ids
+}
+
+func TestPQIVF_AddAfterTrain(t *testing.T) {
+	idx := trainedIndex(t)
+
+	newVec := []float32{20, 20, 20, 20, 20, 20}
+	if err := idx.Add(5, newVec); err != nil {
+		t.Fatalf("Add after Train failed: %v", err)
+	}
+
+	// The new id must be reachable through Search without retraining. The
+	// distances are quantized, so the check is membership, not rank.
+	ids := searchIDs(t, idx, newVec, 5)
+	if !ids[5] {
+		t.Fatalf("expected id 5 to be findable after Add on a trained index, got %v", ids)
+	}
+}
+
+func TestPQIVF_BulkAddAfterTrain(t *testing.T) {
+	idx := trainedIndex(t)
+
+	if err := idx.BulkAdd(map[int][]float32{
+		5: {20, 20, 20, 20, 20, 20},
+		6: {-20, -20, -20, -20, -20, -20},
+	}); err != nil {
+		t.Fatalf("BulkAdd after Train failed: %v", err)
+	}
+
+	// Both new ids must be reachable through Search without retraining. The
+	// distances are quantized, so the check is membership, not rank.
+	ids := searchIDs(t, idx, []float32{20, 20, 20, 20, 20, 20}, 6)
+	if !ids[5] || !ids[6] {
+		t.Fatalf("expected ids 5 and 6 to be findable after BulkAdd on a trained index, got %v", ids)
+	}
+}
+
+func TestPQIVF_DeleteAfterTrain(t *testing.T) {
+	idx := trainedIndex(t)
+
+	if err := idx.Delete(1); err != nil {
+		t.Fatalf("Delete after Train failed: %v", err)
+	}
+
+	// The index stays searchable, the deleted id is gone, and the surviving
+	// ids are still reachable.
+	ids := searchIDs(t, idx, []float32{1, 2, 3, 4, 5, 6}, 3)
+	if ids[1] {
+		t.Fatalf("deleted id 1 was returned by Search")
+	}
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 surviving ids in the results, got %v", ids)
+	}
+}
+
+func TestPQIVF_UpdateAfterTrain(t *testing.T) {
+	idx := trainedIndex(t)
+
+	newVec := []float32{30, 30, 30, 30, 30, 30}
+	if err := idx.Update(2, newVec); err != nil {
+		t.Fatalf("Update after Train failed: %v", err)
+	}
+
+	// The updated vector must be reflected in Search without retraining. The
+	// distances are quantized, so the check is membership, not rank.
+	ids := searchIDs(t, idx, newVec, 4)
+	if !ids[2] {
+		t.Fatalf("expected id 2 at its new vector after Update on a trained index, got %v", ids)
+	}
+}
+
+func TestPQIVF_UntrainedSearchErrors(t *testing.T) {
+	idx := newIndex(t, 6, 3, 2, 256, 10)
+	if err := idx.Add(1, []float32{1, 2, 3, 4, 5, 6}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	if _, err := idx.Search([]float32{1, 2, 3, 4, 5, 6}, 1); err == nil {
+		t.Fatal("expected search on a never-trained index to fail, but it succeeded")
 	}
 }
 
