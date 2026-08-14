@@ -173,6 +173,19 @@ func New(dimension int, opts ...Option) (*Index, error) {
 	return h, nil
 }
 
+// SetEf changes the search breadth used by Search. Larger values improve
+// recall at the cost of latency, and the setting takes effect for searches
+// that start after the call. It returns an error when ef is not positive.
+func (h *Index) SetEf(ef int) error {
+	if ef < 1 {
+		return fmt.Errorf("parameter Ef must be at least 1, got %d", ef)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.ef = ef
+	return nil
+}
+
 // randomLevel computes a random level for a new node based on an exponential distribution.
 func (h *Index) randomLevel() int {
 	if h.m <= 1 {

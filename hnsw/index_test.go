@@ -680,3 +680,20 @@ func TestHNSWIndex_FallbackSearchCounter(t *testing.T) {
 		t.Fatalf("expected at least 1 fallback search, got %d", got)
 	}
 }
+
+func TestHNSWIndex_SetEf(t *testing.T) {
+	index := newTestIndex(t, 4, hnsw.WithEf(10))
+	if err := index.SetEf(200); err != nil {
+		t.Fatalf("SetEf failed: %v", err)
+	}
+	if err := index.SetEf(0); err == nil {
+		t.Fatal("expected error for non-positive ef, got none")
+	}
+	// The index stays usable after the change.
+	if err := index.Add(1, []float32{1, 2, 3, 4}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	if _, err := index.Search([]float32{1, 2, 3, 4}, 1); err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+}
