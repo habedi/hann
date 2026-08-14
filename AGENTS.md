@@ -27,14 +27,14 @@ Priorities, in order:
 Hann is a public Go module that other programs import. The following must stay backward-compatible:
 
 - The `core.Index` interface. Adding a method breaks every implementation outside this repository, so a new capability belongs on the concrete index
-  types, or on a separate optional interface that callers can assert.
-- Exported types and constructor signatures (`hnsw.NewHNSW`, `pqivf.NewPQIVFIndex`, and `rpt.NewRPTIndex`). New tuning parameters belong in an options
-  struct or a setter, not in a longer parameter list.
+  types, or on a separate optional interface that callers can assert, like `core.BulkIndex` and `core.Trainer`.
+- Exported types and constructor signatures (`hnsw.New`, `pqivf.New`, and `rpt.New`, each returning `(*Index, error)`). A new tuning parameter is a
+  new functional option, never a change to an existing signature.
 - The shapes of `core.Neighbor` and `core.IndexStats`: fields may be added, not removed or renamed.
 - The gob encoding written by `Save`. An index file written by an older version must still load. The `serializedIndex`, `serializedPQIVF`, and
   `rptSerialized` structs are the on-disk format, so fields may be added with sensible zero values, but they may not be removed, renamed, or reordered
   in meaning.
-- The keys in `core.Distances` and the names reported by `IndexStats.Distance`.
+- The names of the built-in metrics in the `core` registry and the names reported by `IndexStats.Distance`.
 - The environment variables `HANN_SEED` and `HANN_BENCH_NTRD`, along with the values they accept. `HANN_LOG` is accepted and ignored,
   because the library no longer logs.
 - The minimum Go version declared in `go.mod`. Raising it drops users, so it is a deliberate decision, not a side effect of using a newer standard
@@ -66,8 +66,8 @@ Hann is a public Go module that other programs import. The following must stay b
 
 ## Repository Layout
 
-- `core/`: the shared interface and helpers. `index.go` declares `Index`, `Neighbor`, and `IndexStats`; `distance.go` wraps the C distance functions
-  and exposes the `Distances` map; `vector_ops.go` holds normalization, single and batched; `cpu_check.go` detects AVX and AVX2 at startup and tells
+- `core/`: the shared interface and helpers. `index.go` declares `Index`, the optional `BulkIndex` and `Trainer` interfaces, `Neighbor`, and
+  `IndexStats`; `distance.go` wraps the C distance functions; `metric.go` declares `Metric` and the metric registry; `vector_ops.go` holds normalization, single and batched; `cpu_check.go` detects AVX and AVX2 at startup and tells
   the C side which implementation to install; `utils.go` reads `HANN_SEED`.
 - `core/*.c` and `core/*.h`: the C implementations. `simd_distance.c` holds Euclidean, squared Euclidean, Manhattan, and cosine distance; `simd_ops.c`
   holds normalization and the `hann_cpu_init` entry point. Each function has a fallback, an AVX, and an AVX2 variant, selected once through a function
@@ -95,10 +95,11 @@ Hann is organized into three layers that should not have upward dependencies:
 ### Boundaries Worth Keeping
 
 - An index is reached through `core.Index`. Code that is written against a concrete type gives up the ability to swap indexes, so keep example and
-  benchmark code on the interface where the operation is part of it. `pqivf.Train` is the exception, because it has no counterpart in the other
-  indexes.
-- The distance function is passed into `NewHNSW` along with its name. The name is what `Stats` reports and what the gob codec stores, so the two must
-  agree; do not derive one from the other by comparing function values.
+  benchmark code on the interface where the operation is part of it. Capabilities outside the interface are reached through the optional interfaces:
+  `core.Trainer` for training, and `core.BulkIndex` (or the `core.BulkAdd`, `core.BulkDelete`, and `core.BulkUpdate` helpers) for batches.
+- A metric travels as one `core.Metric` value that bundles the name, the distance function, and the normalization requirement. The name is what
+  `Stats` reports and what the gob codec stores, and loading resolves it through the registry, so a custom metric must be registered with
+  `core.RegisterMetric` before `Load`. Never switch behavior on a metric's name; use `Metric.Normalizes`.
 - Each index owns a mutex and is safe for concurrent use through its exported methods. The unexported helpers assume the lock is already held. Keep
   that split: a helper must not take the lock itself, and an exported method must not call another exported method of the same index while holding it.
 - Random behavior goes through the package-level `seededRand`, guarded by `seededRandMu`, so a run with `HANN_SEED` set is reproducible. Do not call
@@ -114,9 +115,9 @@ Hann is organized into three layers that should not have upward dependencies:
   side trusts the length it is given.
 - Do not retain a Go pointer on the C side. Every call reads or writes the vector and returns.
 - A new distance function needs the fallback, AVX, and AVX2 variants, an entry in the function pointer table in `init_distance_functions`, a
-  declaration in the header, and an entry in `core.Distances`.
-- The AVX and AVX2 variants are compiled behind `#ifdef __AVX__` and `#ifdef __AVX2__`, and selected at runtime by `hann_cpu_init`. A machine without
-  AVX must still build and run through the fallback path.
+  declaration in the header, and a `core.Metric` value pre-registered in `core/metric.go`.
+- The AVX variants carry per-function target attributes behind the `HANN_TARGET_AVX` macro and are selected at runtime by `hann_cpu_init`. A machine
+  without AVX must still build and run through the fallback path, which is why no `-m` ISA flag may appear in the cgo CFLAGS.
 - `NormalizeBatch` fans out over a worker pool, so each worker must own its own vector. Do not share a slice between tasks.
 
 ### Persistence

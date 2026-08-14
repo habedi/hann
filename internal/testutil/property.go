@@ -26,8 +26,8 @@ type Factory struct {
 	// SortedResults reports whether Search returns neighbors in
 	// non-decreasing distance order.
 	SortedResults bool
-	// Distance is the distance function the index was built with.
-	Distance core.DistanceFunc
+	// Metric is the metric the index was built with.
+	Metric core.Metric
 }
 
 // RunPropertyOps runs a random sequence of index operations against a
@@ -126,7 +126,7 @@ func RunPropertyOps(t *testing.T, f Factory, dim int, seed int64, ops int) {
 				for id, vec := range batch {
 					arg[id] = CopyVector(vec)
 				}
-				if err := idx.BulkAdd(arg); err != nil {
+				if err := core.BulkAdd(idx, arg); err != nil {
 					t.Fatalf("op %d: BulkAdd failed: %v", op, err)
 				}
 				for id, vec := range batch {
@@ -137,7 +137,7 @@ func RunPropertyOps(t *testing.T, f Factory, dim int, seed int64, ops int) {
 				if len(ids) == 0 {
 					continue
 				}
-				if err := idx.BulkDelete(ids); err != nil {
+				if err := core.BulkDelete(idx, ids); err != nil {
 					t.Fatalf("op %d: BulkDelete failed: %v", op, err)
 				}
 				for _, id := range ids {
@@ -155,7 +155,7 @@ func RunPropertyOps(t *testing.T, f Factory, dim int, seed int64, ops int) {
 					batch[id] = vec
 					arg[id] = CopyVector(vec)
 				}
-				if err := idx.BulkUpdate(arg); err != nil {
+				if err := core.BulkUpdate(idx, arg); err != nil {
 					t.Fatalf("op %d: BulkUpdate failed: %v", op, err)
 				}
 				for id, vec := range batch {
@@ -226,7 +226,7 @@ func verifyAgainstModel(t *testing.T, f Factory, idx core.Index, model map[int][
 				t.Fatalf("after op %d: Search returned id %d, which is not in the index", op, n.ID)
 			}
 			if f.ExactDistances {
-				want, err := f.Distance(query, vec)
+				want, err := f.Metric.Distance(query, vec)
 				if err != nil {
 					t.Fatalf("after op %d: distance check failed: %v", op, err)
 				}

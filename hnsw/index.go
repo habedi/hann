@@ -1,3 +1,4 @@
+// Package hnsw implements the HNSW graph index.
 package hnsw
 
 import (
@@ -24,9 +25,15 @@ var seededRandMu sync.Mutex
 // maxLevelCap is the upper bound for a node's level.
 const maxLevelCap = 32
 
+// Default construction parameters used by New when no option overrides them.
+const (
+	defaultM  = 16
+	defaultEf = 100
+)
+
 // candidate represents a potential neighbor with its distance.
 type candidate struct {
-	node *Node   // reference to the candidate node
+	node *node   // reference to the candidate node
 	dist float64 // distance to the query vector
 }
 
@@ -70,61 +77,103 @@ func (h *candidateMaxHeap) Pop() interface{} {
 	return x
 }
 
-// Node represents a vector in the HNSW graph along with its links.
-type Node struct {
+// node represents a vector in the HNSW graph along with its links.
+type node struct {
 	ID           int             // unique identifier of the node
 	Vector       []float32       // vector data
 	Level        int             // node level in the hierarchy
-	Links        map[int][]*Node // links to neighbors at each level
-	ReverseLinks map[int][]*Node // reverse links from neighbors
+	Links        map[int][]*node // links to neighbors at each level
+	ReverseLinks map[int][]*node // reverse links from neighbors
 }
 
-// HNSWIndex is the main structure for the HNSW graph index.
-type HNSWIndex struct {
-	Mu               sync.RWMutex  `gob:"-"` // mutex to control concurrent access
+// Index is the HNSW graph index. Construct it with New; the zero value is
+// usable only as a target for Load.
+type Index struct {
+	mu               sync.RWMutex  // mutex to control concurrent access
 	fallbackSearches atomic.Int64  // searches that fell back to a brute-force scan
-	Dimension        int           // dimension of the vectors
-	EntryPoint       *Node         // starting point for searches
-	MaxLevel         int           // current maximum level in the graph
-	Nodes            map[int]*Node // map of node id to Node pointer
+	dimension        int           // dimension of the vectors
+	entryPoint       *node         // starting point for searches
+	maxLevel         int           // current maximum level in the graph
+	nodes            map[int]*node // map of node id to node pointer
 	nodesByLevel     map[int]map[int]struct{}
-	M                int               // maximum number of neighbors per node
-	Ef               int               // search parameter controlling search depth
-	Distance         core.DistanceFunc // function to calculate distance between vectors
-	DistanceName     string            // name of the distance metric
-	ExhaustiveSearch bool              // flag for performing exhaustive search during searchLayer
+	m                int         // maximum number of neighbors per node
+	ef               int         // search parameter controlling search depth
+	metric           core.Metric // distance metric used by the index
+	exhaustiveSearch bool        // flag for performing exhaustive search during searchLayer
 }
 
-// NewHNSW creates a new HNSW index given the dimension, M, ef, and distance function.
-func NewHNSW(dimension int, M int, ef int, distance core.DistanceFunc, distanceName string) *HNSWIndex {
-	return &HNSWIndex{
-		Dimension:    dimension,
-		Nodes:        make(map[int]*Node),
+// Option configures an Index during construction with New.
+type Option func(*Index)
+
+// WithM sets the maximum number of neighbors per node. The default is 16.
+func WithM(m int) Option {
+	return func(h *Index) { h.m = m }
+}
+
+// WithEf sets the search depth parameter. The default is 100.
+func WithEf(ef int) Option {
+	return func(h *Index) { h.ef = ef }
+}
+
+// WithMetric sets the distance metric. The default is core.Euclidean.
+func WithMetric(metric core.Metric) Option {
+	return func(h *Index) { h.metric = metric }
+}
+
+// WithExhaustiveSearch turns exhaustive layer search on or off. It is off by
+// default; turning it on trades speed for exact layer exploration.
+func WithExhaustiveSearch(on bool) Option {
+	return func(h *Index) { h.exhaustiveSearch = on }
+}
+
+// New creates an HNSW index for vectors of the given dimension, applying the
+// given options over the defaults: M 16, Ef 100, the Euclidean metric, and
+// exhaustive search off. It returns an error when the dimension is not
+// positive, M is below 2, Ef is below 1, or the metric is the zero value.
+func New(dimension int, opts ...Option) (*Index, error) {
+	h := &Index{
+		dimension:    dimension,
+		nodes:        make(map[int]*node),
 		nodesByLevel: make(map[int]map[int]struct{}),
-		MaxLevel:     -1,
-		M:            M,
-		Ef:           ef,
-		Distance:     distance,
-		DistanceName: distanceName,
+		maxLevel:     -1,
+		m:            defaultM,
+		ef:           defaultEf,
+		metric:       core.Euclidean,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	if dimension <= 0 {
+		return nil, fmt.Errorf("dimension must be positive, got %d", dimension)
+	}
+	if h.m < 2 {
+		return nil, fmt.Errorf("parameter M must be at least 2, got %d", h.m)
+	}
+	if h.ef < 1 {
+		return nil, fmt.Errorf("parameter Ef must be at least 1, got %d", h.ef)
+	}
+	if h.metric.IsZero() {
+		return nil, errors.New("metric must not be the zero value")
+	}
+	return h, nil
 }
 
 // randomLevel computes a random level for a new node based on an exponential distribution.
-func (h *HNSWIndex) randomLevel() int {
-	if h.M <= 1 {
+func (h *Index) randomLevel() int {
+	if h.m <= 1 {
 		return 0
 	}
 	seededRandMu.Lock()
 	r := seededRand.Float64()
 	seededRandMu.Unlock()
-	level := int(-math.Log(r) / math.Log(float64(h.M)))
+	level := int(-math.Log(r) / math.Log(float64(h.m)))
 	if level > maxLevelCap {
 		level = maxLevelCap
 	}
 	return level
 }
 
-// serializedNode is used to store a Node during gob encoding/decoding.
+// serializedNode is used to store a node during gob encoding/decoding.
 type serializedNode struct {
 	ID     int           // node id
 	Vector []float32     // vector data
@@ -132,7 +181,7 @@ type serializedNode struct {
 	Links  map[int][]int // neighbor ids at each level
 }
 
-// serializedIndex is the serializable version of the HNSWIndex.
+// serializedIndex is the serializable version of the Index.
 type serializedIndex struct {
 	Dimension        int                    // dimension of the index
 	M                int                    // maximum neighbors per node
@@ -141,7 +190,7 @@ type serializedIndex struct {
 	EntryPoint       int                    // id of the entry point node
 	MaxLevel         int                    // maximum level in the graph
 	DistanceName     string                 // name of the distance metric
-	ExhaustiveSearch bool                   // Add this field
+	ExhaustiveSearch bool                   // exhaustive layer search flag
 	HasEntryPoint    bool                   // whether EntryPoint holds a valid node id
 	FormatVersion    int                    // on-disk format version
 }
@@ -151,38 +200,38 @@ type serializedIndex struct {
 // written by a newer version of the format are rejected on load.
 const formatVersion = 1
 
-// GobEncode serializes the HNSWIndex using the gob encoder.
-func (h *HNSWIndex) GobEncode() ([]byte, error) {
-	h.Mu.RLock()
-	defer h.Mu.RUnlock()
+// GobEncode serializes the Index using the gob encoder.
+func (h *Index) GobEncode() ([]byte, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	si := serializedIndex{
-		Dimension:        h.Dimension,
-		M:                h.M,
-		Ef:               h.Ef,
+		Dimension:        h.dimension,
+		M:                h.m,
+		Ef:               h.ef,
 		Nodes:            make(map[int]serializedNode),
 		EntryPoint:       0,
-		MaxLevel:         h.MaxLevel,
-		DistanceName:     h.DistanceName,
-		ExhaustiveSearch: h.ExhaustiveSearch,
+		MaxLevel:         h.maxLevel,
+		DistanceName:     h.metric.Name(),
+		ExhaustiveSearch: h.exhaustiveSearch,
 		FormatVersion:    formatVersion,
 	}
-	for id, node := range h.Nodes {
+	for id, n := range h.nodes {
 		sn := serializedNode{
-			ID:     node.ID,
-			Vector: node.Vector,
-			Level:  node.Level,
+			ID:     n.ID,
+			Vector: n.Vector,
+			Level:  n.Level,
 			Links:  make(map[int][]int),
 		}
 		// Store neighbor ids for each level.
-		for level, neighbors := range node.Links {
+		for level, neighbors := range n.Links {
 			for _, nb := range neighbors {
 				sn.Links[level] = append(sn.Links[level], nb.ID)
 			}
 		}
 		si.Nodes[id] = sn
 	}
-	if h.EntryPoint != nil {
-		si.EntryPoint = h.EntryPoint.ID
+	if h.entryPoint != nil {
+		si.EntryPoint = h.entryPoint.ID
 		si.HasEntryPoint = true
 	}
 	var buf bytes.Buffer
@@ -193,8 +242,8 @@ func (h *HNSWIndex) GobEncode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// GobDecode deserializes data into the HNSWIndex using the gob decoder.
-func (h *HNSWIndex) GobDecode(data []byte) error {
+// GobDecode deserializes data into the Index using the gob decoder.
+func (h *Index) GobDecode(data []byte) error {
 	var si serializedIndex
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)
@@ -205,68 +254,67 @@ func (h *HNSWIndex) GobDecode(data []byte) error {
 		return fmt.Errorf("index file has format version %d, but this build supports up to %d",
 			si.FormatVersion, formatVersion)
 	}
-	h.Dimension = si.Dimension
-	h.M = si.M
-	h.Ef = si.Ef
-	h.MaxLevel = si.MaxLevel
-	h.DistanceName = si.DistanceName
-	h.ExhaustiveSearch = si.ExhaustiveSearch
-	// Restore the distance function from its name. An index that was
-	// constructed with a custom function keeps it when the name is unknown.
-	if dist, ok := core.Distances[si.DistanceName]; ok {
-		h.Distance = dist
-	} else if h.Distance == nil {
-		return fmt.Errorf("unknown distance %q in serialized index", si.DistanceName)
+	h.dimension = si.Dimension
+	h.m = si.M
+	h.ef = si.Ef
+	h.maxLevel = si.MaxLevel
+	h.exhaustiveSearch = si.ExhaustiveSearch
+	// Restore the metric from its name. An index that was constructed with a
+	// custom metric keeps it when the name is unknown.
+	if metric, ok := core.MetricByName(si.DistanceName); ok {
+		h.metric = metric
+	} else if h.metric.IsZero() {
+		return fmt.Errorf("unknown metric %q in serialized index", si.DistanceName)
 	}
-	h.Nodes = make(map[int]*Node)
+	h.nodes = make(map[int]*node)
 	// Recreate nodes from the serialized data.
 	for id, sn := range si.Nodes {
-		h.Nodes[id] = &Node{
+		h.nodes[id] = &node{
 			ID:           sn.ID,
 			Vector:       sn.Vector,
 			Level:        sn.Level,
-			Links:        make(map[int][]*Node),
-			ReverseLinks: make(map[int][]*Node),
+			Links:        make(map[int][]*node),
+			ReverseLinks: make(map[int][]*node),
 		}
 	}
 	// Restore neighbor pointers.
 	for id, sn := range si.Nodes {
-		node := h.Nodes[id]
+		n := h.nodes[id]
 		for level, nbIDs := range sn.Links {
 			for _, nbID := range nbIDs {
-				if nb, exists := h.Nodes[nbID]; exists {
-					node.Links[level] = append(node.Links[level], nb)
+				if nb, exists := h.nodes[nbID]; exists {
+					n.Links[level] = append(n.Links[level], nb)
 				}
 			}
 		}
 	}
 	// Rebuild reverse links.
-	for _, node := range h.Nodes {
-		for level, neighbors := range node.Links {
+	for _, n := range h.nodes {
+		for level, neighbors := range n.Links {
 			for _, nb := range neighbors {
-				nb.ReverseLinks[level] = append(nb.ReverseLinks[level], node)
+				nb.ReverseLinks[level] = append(nb.ReverseLinks[level], n)
 			}
 		}
 	}
 	// Rebuild the per-level bookkeeping used by Delete to pick a new entry point.
 	h.nodesByLevel = make(map[int]map[int]struct{})
-	for id, node := range h.Nodes {
-		if _, ok := h.nodesByLevel[node.Level]; !ok {
-			h.nodesByLevel[node.Level] = make(map[int]struct{})
+	for id, n := range h.nodes {
+		if _, ok := h.nodesByLevel[n.Level]; !ok {
+			h.nodesByLevel[n.Level] = make(map[int]struct{})
 		}
-		h.nodesByLevel[node.Level][id] = struct{}{}
+		h.nodesByLevel[n.Level][id] = struct{}{}
 	}
 	if si.HasEntryPoint {
-		h.EntryPoint = h.Nodes[si.EntryPoint]
+		h.entryPoint = h.nodes[si.EntryPoint]
 	} else if si.EntryPoint != 0 {
 		// Legacy files carry no flag and use id 0 as the nil sentinel.
-		h.EntryPoint = h.Nodes[si.EntryPoint]
-	} else if node, ok := h.Nodes[0]; ok {
+		h.entryPoint = h.nodes[si.EntryPoint]
+	} else if n, ok := h.nodes[0]; ok {
 		// A legacy file whose entry point was the node with id 0 stored the
 		// sentinel value; recover by using that node.
-		h.EntryPoint = node
+		h.entryPoint = n
 	} else {
-		h.EntryPoint = nil
+		h.entryPoint = nil
 	}
 	return nil
 }
@@ -286,10 +334,10 @@ func selectM(candidates []candidate, M int) []candidate {
 }
 
 // selectNodes selects up to M nodes from a list based on their distance to vec.
-func selectNodes(nodes []*Node, vec []float32, M int, distance core.DistanceFunc) ([]*Node, error) {
+func selectNodes(nodes []*node, vec []float32, M int, distance core.DistanceFunc) ([]*node, error) {
 	// Create a temporary array with nodes and their distances.
 	type nodeWithDist struct {
-		node *Node
+		node *node
 		dist float64
 	}
 	arr := make([]nodeWithDist, len(nodes))
@@ -306,7 +354,7 @@ func selectNodes(nodes []*Node, vec []float32, M int, distance core.DistanceFunc
 		}
 		return arr[i].dist < arr[j].dist
 	})
-	selected := make([]*Node, minInt(len(arr), M))
+	selected := make([]*node, minInt(len(arr), M))
 	for i := range selected {
 		selected[i] = arr[i].node
 	}
@@ -314,7 +362,7 @@ func selectNodes(nodes []*Node, vec []float32, M int, distance core.DistanceFunc
 }
 
 // removeFromSlice removes a target node from a slice of nodes.
-func removeFromSlice(slice []*Node, target *Node) []*Node {
+func removeFromSlice(slice []*node, target *node) []*node {
 	newSlice := slice[:0]
 	for _, n := range slice {
 		if n != target {
@@ -325,12 +373,12 @@ func removeFromSlice(slice []*Node, target *Node) []*Node {
 }
 
 // difference returns nodes in a that are not in b.
-func difference(a, b []*Node) []*Node {
+func difference(a, b []*node) []*node {
 	set := make(map[int]bool)
 	for _, n := range b {
 		set[n.ID] = true
 	}
-	var diff []*Node
+	var diff []*node
 	for _, n := range a {
 		if !set[n.ID] {
 			diff = append(diff, n)
@@ -340,7 +388,7 @@ func difference(a, b []*Node) []*Node {
 }
 
 // trimNeighborLinks reduces a node's neighbors at a level to the best M based on distance.
-func trimNeighborLinks(n *Node, level, M int, distance core.DistanceFunc) error {
+func trimNeighborLinks(n *node, level, M int, distance core.DistanceFunc) error {
 	original := n.Links[level]
 	trimmed, err := selectNodes(original, n.Vector, M, distance)
 	if err != nil {
@@ -355,7 +403,7 @@ func trimNeighborLinks(n *Node, level, M int, distance core.DistanceFunc) error 
 }
 
 // removeNodeLinks removes all links of a node from the graph.
-func (h *HNSWIndex) removeNodeLinks(n *Node) {
+func (h *Index) removeNodeLinks(n *node) {
 	for level, neighbors := range n.ReverseLinks {
 		for _, neighbor := range neighbors {
 			neighbor.Links[level] = removeFromSlice(neighbor.Links[level], n)
@@ -370,22 +418,22 @@ func (h *HNSWIndex) removeNodeLinks(n *Node) {
 	}
 }
 
-// resetEntryPoint recomputes MaxLevel and picks a new entry point from the
+// resetEntryPoint recomputes maxLevel and picks a new entry point from the
 // per-level bookkeeping, skipping the node with the given id. It leaves the
 // entry point nil when no other node exists. The caller must hold the lock.
-func (h *HNSWIndex) resetEntryPoint(excludeID int) {
-	h.EntryPoint = nil
-	h.MaxLevel = -1
+func (h *Index) resetEntryPoint(excludeID int) {
+	h.entryPoint = nil
+	h.maxLevel = -1
 	for level, ids := range h.nodesByLevel {
-		if level <= h.MaxLevel {
+		if level <= h.maxLevel {
 			continue
 		}
 		for id := range ids {
 			if id == excludeID {
 				continue
 			}
-			h.MaxLevel = level
-			h.EntryPoint = h.Nodes[id]
+			h.maxLevel = level
+			h.entryPoint = h.nodes[id]
 			break
 		}
 	}
@@ -400,32 +448,32 @@ func minInt(a, b int) int {
 }
 
 // insertNode adds a node into the HNSW graph, updating links as needed.
-func (h *HNSWIndex) insertNode(n *Node, searchEf int) error {
+func (h *Index) insertNode(n *node, searchEf int) error {
 	// If index is empty, set this node as entry point.
-	if h.EntryPoint == nil {
-		h.EntryPoint = n
-		h.MaxLevel = n.Level
+	if h.entryPoint == nil {
+		h.entryPoint = n
+		h.maxLevel = n.Level
 		return nil
 	}
 	// Seed the search from the current entry point before it may be updated,
 	// so the node being inserted never becomes its own search seed.
-	current := h.EntryPoint
+	current := h.entryPoint
 	// Update entry point if the new node has a higher level.
-	if n.Level > h.MaxLevel {
-		h.EntryPoint = n
-		h.MaxLevel = n.Level
+	if n.Level > h.maxLevel {
+		h.entryPoint = n
+		h.maxLevel = n.Level
 	}
 	// Navigate the graph from the top level down to the node's level.
-	for L := h.MaxLevel; L > n.Level; L-- {
+	for L := h.maxLevel; L > n.Level; L-- {
 		changed := true
 		for changed {
 			changed = false
 			for _, neighbor := range current.Links[L] {
-				distNeighbor, err := h.Distance(n.Vector, neighbor.Vector)
+				distNeighbor, err := h.metric.Distance(n.Vector, neighbor.Vector)
 				if err != nil {
 					return err
 				}
-				distCurrent, err := h.Distance(n.Vector, current.Vector)
+				distCurrent, err := h.metric.Distance(n.Vector, current.Vector)
 				if err != nil {
 					return err
 				}
@@ -437,13 +485,13 @@ func (h *HNSWIndex) insertNode(n *Node, searchEf int) error {
 		}
 	}
 	// For each level where the new node will be inserted.
-	for L := minInt(n.Level, h.MaxLevel); L >= 0; L-- {
-		candList, err := h.searchLayer(n.Vector, current, L, searchEf, h.Distance)
+	for L := minInt(n.Level, h.maxLevel); L >= 0; L-- {
+		candList, err := h.searchLayer(n.Vector, current, L, searchEf, h.metric.Func())
 		if err != nil {
 			return err
 		}
-		selectedCands := selectM(candList, h.M)
-		selectedNodes := make([]*Node, len(selectedCands))
+		selectedCands := selectM(candList, h.m)
+		selectedNodes := make([]*node, len(selectedCands))
 		for i, cand := range selectedCands {
 			selectedNodes[i] = cand.node
 		}
@@ -455,8 +503,8 @@ func (h *HNSWIndex) insertNode(n *Node, searchEf int) error {
 			// Record the backlink, so removeNodeLinks can later remove n from
 			// the neighbor's links.
 			n.ReverseLinks[L] = append(n.ReverseLinks[L], neighbor)
-			if len(neighbor.Links[L]) > h.M {
-				if err := trimNeighborLinks(neighbor, L, h.M, h.Distance); err != nil {
+			if len(neighbor.Links[L]) > h.m {
+				if err := trimNeighborLinks(neighbor, L, h.m, h.metric.Func()); err != nil {
 					return err
 				}
 			}
@@ -470,7 +518,7 @@ func (h *HNSWIndex) insertNode(n *Node, searchEf int) error {
 }
 
 // searchLayer performs a search in the graph at a given level.
-func (h *HNSWIndex) searchLayer(query []float32, entrypoint *Node, level int, ef int, distance core.DistanceFunc) ([]candidate, error) {
+func (h *Index) searchLayer(query []float32, entrypoint *node, level int, ef int, distance core.DistanceFunc) ([]candidate, error) {
 	visited := map[int]bool{entrypoint.ID: true}
 	d0, err := distance(query, entrypoint.Vector)
 	if err != nil {
@@ -484,7 +532,7 @@ func (h *HNSWIndex) searchLayer(query []float32, entrypoint *Node, level int, ef
 	for candQueue.Len() > 0 {
 		current := candQueue[0]
 		worstResult := resultQueue[0]
-		if current.dist > worstResult.dist && !h.ExhaustiveSearch {
+		if current.dist > worstResult.dist && !h.exhaustiveSearch {
 			break
 		}
 		heap.Pop(&candQueue)
@@ -522,35 +570,35 @@ func (h *HNSWIndex) searchLayer(query []float32, entrypoint *Node, level int, ef
 }
 
 // Add inserts a new vector into the index with a unique id.
-func (h *HNSWIndex) Add(id int, vector []float32) error {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-	if len(vector) != h.Dimension {
+func (h *Index) Add(id int, vector []float32) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(vector) != h.dimension {
 		return fmt.Errorf("vector dimension %d does not match index dimension %d",
-			len(vector), h.Dimension)
+			len(vector), h.dimension)
 	}
-	// Normalize if using cosine similarity.
-	if h.DistanceName == "cosine" {
+	// Normalize when the metric requires normalized vectors.
+	if h.metric.Normalizes() {
 		core.NormalizeVector(vector)
 	}
-	if _, exists := h.Nodes[id]; exists {
+	if _, exists := h.nodes[id]; exists {
 		return fmt.Errorf("id %d already exists", id)
 	}
 	level := h.randomLevel()
-	newNode := &Node{
+	newNode := &node{
 		ID:           id,
 		Vector:       vector,
 		Level:        level,
-		Links:        make(map[int][]*Node),
-		ReverseLinks: make(map[int][]*Node),
+		Links:        make(map[int][]*node),
+		ReverseLinks: make(map[int][]*node),
 	}
-	h.Nodes[id] = newNode
+	h.nodes[id] = newNode
 	if _, ok := h.nodesByLevel[level]; !ok {
 		h.nodesByLevel[level] = make(map[int]struct{})
 	}
 	h.nodesByLevel[level][id] = struct{}{}
-	if err := h.insertNode(newNode, h.Ef); err != nil {
-		delete(h.Nodes, id)
+	if err := h.insertNode(newNode, h.ef); err != nil {
+		delete(h.nodes, id)
 		if _, ok := h.nodesByLevel[level]; ok {
 			delete(h.nodesByLevel[level], id)
 		}
@@ -560,16 +608,16 @@ func (h *HNSWIndex) Add(id int, vector []float32) error {
 }
 
 // Delete removes a vector from the index by its id.
-func (h *HNSWIndex) Delete(id int) error {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-	node, exists := h.Nodes[id]
+func (h *Index) Delete(id int) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n, exists := h.nodes[id]
 	if !exists {
 		return fmt.Errorf("id %d not found", id)
 	}
-	h.removeNodeLinks(node)
-	delete(h.Nodes, id)
-	level := node.Level
+	h.removeNodeLinks(n)
+	delete(h.nodes, id)
+	level := n.Level
 	if _, ok := h.nodesByLevel[level]; ok {
 		delete(h.nodesByLevel[level], id)
 		if len(h.nodesByLevel[level]) == 0 {
@@ -577,8 +625,8 @@ func (h *HNSWIndex) Delete(id int) error {
 		}
 	}
 	// Update the entry point if necessary.
-	if h.EntryPoint != nil && h.EntryPoint.ID == id {
-		h.EntryPoint = nil
+	if h.entryPoint != nil && h.entryPoint.ID == id {
+		h.entryPoint = nil
 		// Find the new max level efficiently
 		newMaxLevel := -1
 		for l := range h.nodesByLevel {
@@ -586,12 +634,12 @@ func (h *HNSWIndex) Delete(id int) error {
 				newMaxLevel = l
 			}
 		}
-		h.MaxLevel = newMaxLevel
+		h.maxLevel = newMaxLevel
 
-		if h.MaxLevel != -1 {
+		if h.maxLevel != -1 {
 			// Pick any node from the highest level
-			for newEntryPointID := range h.nodesByLevel[h.MaxLevel] {
-				h.EntryPoint = h.Nodes[newEntryPointID]
+			for newEntryPointID := range h.nodesByLevel[h.maxLevel] {
+				h.entryPoint = h.nodes[newEntryPointID]
 				break
 			}
 		}
@@ -600,77 +648,77 @@ func (h *HNSWIndex) Delete(id int) error {
 }
 
 // Update changes the vector for an existing node and re-inserts it in the graph.
-func (h *HNSWIndex) Update(id int, vector []float32) error {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-	node, exists := h.Nodes[id]
+func (h *Index) Update(id int, vector []float32) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n, exists := h.nodes[id]
 	if !exists {
 		return fmt.Errorf("id %d not found", id)
 	}
-	if len(vector) != h.Dimension {
+	if len(vector) != h.dimension {
 		return fmt.Errorf("vector dimension %d does not match index dimension %d",
-			len(vector), h.Dimension)
+			len(vector), h.dimension)
 	}
-	// Normalize vector if using cosine distance.
-	if h.DistanceName == "cosine" {
+	// Normalize when the metric requires normalized vectors.
+	if h.metric.Normalizes() {
 		core.NormalizeVector(vector)
 	}
-	h.removeNodeLinks(node)
-	node.Vector = vector
-	node.Links = make(map[int][]*Node)
-	node.ReverseLinks = make(map[int][]*Node)
+	h.removeNodeLinks(n)
+	n.Vector = vector
+	n.Links = make(map[int][]*node)
+	n.ReverseLinks = make(map[int][]*node)
 	// Reinsertion must not start the search at the node itself, so move the
 	// entry point to another surviving node first.
-	if h.EntryPoint == node {
-		h.resetEntryPoint(node.ID)
+	if h.entryPoint == n {
+		h.resetEntryPoint(n.ID)
 	}
-	if h.EntryPoint == nil {
+	if h.entryPoint == nil {
 		// The node is the only one in the index.
-		h.EntryPoint = node
-		h.MaxLevel = node.Level
+		h.entryPoint = n
+		h.maxLevel = n.Level
 		return nil
 	}
-	if err := h.insertNode(node, h.Ef); err != nil {
+	if err := h.insertNode(n, h.ef); err != nil {
 		return err
 	}
 	return nil
 }
 
 // BulkAdd inserts multiple vectors into the index at once.
-func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
-	// Normalize vectors if using cosine similarity.
-	if h.DistanceName == "cosine" {
+func (h *Index) BulkAdd(vectors map[int][]float32) error {
+	// Normalize vectors in batch when the metric requires it.
+	if h.metric.Normalizes() {
 		var vecs [][]float32
 		for _, vector := range vectors {
-			if len(vector) != h.Dimension {
+			if len(vector) != h.dimension {
 				return fmt.Errorf("vector dimension %d does not match index dimension %d",
-					len(vector), h.Dimension)
+					len(vector), h.dimension)
 			}
 			vecs = append(vecs, vector)
 		}
 		core.NormalizeBatch(vecs)
 	}
 
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-	// The duplicate check reads h.Nodes, so it must happen under the lock.
-	nodesSlice := make([]*Node, 0, len(vectors))
+	// The duplicate check reads h.nodes, so it must happen under the lock.
+	nodesSlice := make([]*node, 0, len(vectors))
 	for id, vector := range vectors {
-		if len(vector) != h.Dimension {
+		if len(vector) != h.dimension {
 			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
-				len(vector), h.Dimension, id)
+				len(vector), h.dimension, id)
 		}
-		if _, exists := h.Nodes[id]; exists {
+		if _, exists := h.nodes[id]; exists {
 			return fmt.Errorf("id %d already exists", id)
 		}
 		level := h.randomLevel()
-		newNode := &Node{
+		newNode := &node{
 			ID:           id,
 			Vector:       vector,
 			Level:        level,
-			Links:        make(map[int][]*Node),
-			ReverseLinks: make(map[int][]*Node),
+			Links:        make(map[int][]*node),
+			ReverseLinks: make(map[int][]*node),
 		}
 		nodesSlice = append(nodesSlice, newNode)
 	}
@@ -678,21 +726,21 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 	sort.Slice(nodesSlice, func(i, j int) bool {
 		return nodesSlice[i].Level > nodesSlice[j].Level
 	})
-	bulkEf := h.Ef
+	bulkEf := h.ef
 
 	for _, newNode := range nodesSlice {
-		h.Nodes[newNode.ID] = newNode
+		h.nodes[newNode.ID] = newNode
 		if _, ok := h.nodesByLevel[newNode.Level]; !ok {
 			h.nodesByLevel[newNode.Level] = make(map[int]struct{})
 		}
 		h.nodesByLevel[newNode.Level][newNode.ID] = struct{}{}
-		if h.EntryPoint == nil {
-			h.EntryPoint = newNode
-			h.MaxLevel = newNode.Level
+		if h.entryPoint == nil {
+			h.entryPoint = newNode
+			h.maxLevel = newNode.Level
 		} else {
-			if newNode.Level > h.MaxLevel {
-				h.EntryPoint = newNode
-				h.MaxLevel = newNode.Level
+			if newNode.Level > h.maxLevel {
+				h.entryPoint = newNode
+				h.maxLevel = newNode.Level
 			}
 			if err := h.insertNode(newNode, bulkEf); err != nil {
 				return err
@@ -703,31 +751,31 @@ func (h *HNSWIndex) BulkAdd(vectors map[int][]float32) error {
 }
 
 // BulkDelete removes multiple nodes from the index.
-func (h *HNSWIndex) BulkDelete(ids []int) error {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
+func (h *Index) BulkDelete(ids []int) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	for _, id := range ids {
-		node, exists := h.Nodes[id]
+		n, exists := h.nodes[id]
 		if !exists {
 			continue
 		}
-		h.removeNodeLinks(node)
-		delete(h.Nodes, id)
-		if levelNodes, ok := h.nodesByLevel[node.Level]; ok {
+		h.removeNodeLinks(n)
+		delete(h.nodes, id)
+		if levelNodes, ok := h.nodesByLevel[n.Level]; ok {
 			delete(levelNodes, id)
 			if len(levelNodes) == 0 {
-				delete(h.nodesByLevel, node.Level)
+				delete(h.nodesByLevel, n.Level)
 			}
 		}
 	}
 
 	// Clean up links in remaining nodes.
-	for _, n := range h.Nodes {
+	for _, n := range h.nodes {
 		for L, neighbors := range n.Links {
-			newNeighbors := make([]*Node, 0, len(neighbors))
+			newNeighbors := make([]*node, 0, len(neighbors))
 			for _, neighbor := range neighbors {
-				if _, exists := h.Nodes[neighbor.ID]; exists {
+				if _, exists := h.nodes[neighbor.ID]; exists {
 					newNeighbors = append(newNeighbors, neighbor)
 				}
 			}
@@ -735,59 +783,59 @@ func (h *HNSWIndex) BulkDelete(ids []int) error {
 		}
 	}
 	// Update the entry point and the maximum level.
-	h.EntryPoint = nil
-	h.MaxLevel = -1
-	for _, n := range h.Nodes {
-		if h.EntryPoint == nil || n.Level > h.EntryPoint.Level {
-			h.EntryPoint = n
-			h.MaxLevel = n.Level
+	h.entryPoint = nil
+	h.maxLevel = -1
+	for _, n := range h.nodes {
+		if h.entryPoint == nil || n.Level > h.entryPoint.Level {
+			h.entryPoint = n
+			h.maxLevel = n.Level
 		}
 	}
 	return nil
 }
 
 // BulkUpdate updates multiple nodes with new vectors.
-func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
-	// Normalize vectors in batch if needed.
-	if h.DistanceName == "cosine" {
+func (h *Index) BulkUpdate(updates map[int][]float32) error {
+	// Normalize vectors in batch when the metric requires it.
+	if h.metric.Normalizes() {
 		var vecs [][]float32
 		for _, vector := range updates {
-			if len(vector) != h.Dimension {
+			if len(vector) != h.dimension {
 				return fmt.Errorf("vector dimension %d does not match index dimension %d",
-					len(vector), h.Dimension)
+					len(vector), h.dimension)
 			}
 			vecs = append(vecs, vector)
 		}
 		core.NormalizeBatch(vecs)
 	}
 
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	// Unlink and reinsert only the nodes being updated, as Update does.
 	for id, vector := range updates {
-		node, exists := h.Nodes[id]
+		n, exists := h.nodes[id]
 		if !exists {
 			continue
 		}
-		if len(vector) != h.Dimension {
+		if len(vector) != h.dimension {
 			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
-				len(vector), h.Dimension, id)
+				len(vector), h.dimension, id)
 		}
-		h.removeNodeLinks(node)
-		node.Vector = vector
-		node.Links = make(map[int][]*Node)
-		node.ReverseLinks = make(map[int][]*Node)
+		h.removeNodeLinks(n)
+		n.Vector = vector
+		n.Links = make(map[int][]*node)
+		n.ReverseLinks = make(map[int][]*node)
 		// Reinsertion must not start the search at the node itself, so move
 		// the entry point to another surviving node first.
-		if h.EntryPoint == node {
-			h.resetEntryPoint(node.ID)
+		if h.entryPoint == n {
+			h.resetEntryPoint(n.ID)
 		}
-		if h.EntryPoint == nil {
+		if h.entryPoint == nil {
 			// The node is the only one in the index.
-			h.EntryPoint = node
-			h.MaxLevel = node.Level
-		} else if err := h.insertNode(node, h.Ef); err != nil {
+			h.entryPoint = n
+			h.maxLevel = n.Level
+		} else if err := h.insertNode(n, h.ef); err != nil {
 			return err
 		}
 	}
@@ -795,37 +843,37 @@ func (h *HNSWIndex) BulkUpdate(updates map[int][]float32) error {
 }
 
 // Search finds the k-nearest neighbors of a given query vector.
-func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
-	h.Mu.RLock()
-	defer h.Mu.RUnlock()
-	if len(query) != h.Dimension {
+func (h *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if len(query) != h.dimension {
 		return nil, fmt.Errorf("query dimension %d does not match index dimension %d",
-			len(query), h.Dimension)
+			len(query), h.dimension)
 	}
-	if h.EntryPoint == nil {
+	if h.entryPoint == nil {
 		return nil, errors.New("index is empty")
 	}
 
 	// Copy query to avoid modifying the original vector.
 	queryCopy := make([]float32, len(query))
 	copy(queryCopy, query)
-	if h.DistanceName == "cosine" {
+	if h.metric.Normalizes() {
 		core.NormalizeVector(queryCopy)
 	}
 	query = queryCopy
 
 	// Greedy search down from the top layer.
-	current := h.EntryPoint
-	for L := h.MaxLevel; L > 0; L-- {
+	current := h.entryPoint
+	for L := h.maxLevel; L > 0; L-- {
 		changed := true
 		for changed {
 			changed = false
 			for _, neighbor := range current.Links[L] {
-				distNeighbor, err := h.Distance(query, neighbor.Vector)
+				distNeighbor, err := h.metric.Distance(query, neighbor.Vector)
 				if err != nil {
 					return nil, err
 				}
-				distCurrent, err := h.Distance(query, current.Vector)
+				distCurrent, err := h.metric.Distance(query, current.Vector)
 				if err != nil {
 					return nil, err
 				}
@@ -837,7 +885,7 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 		}
 	}
 	// Search in the base layer (level 0) for candidates.
-	candidates, err := h.searchLayer(query, current, 0, h.Ef, h.Distance)
+	candidates, err := h.searchLayer(query, current, 0, h.ef, h.metric.Func())
 	if err != nil {
 		return nil, err
 	}
@@ -852,17 +900,17 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 
 		fallbackSize := k - len(candidates)
 		var keys []int
-		for id := range h.Nodes {
+		for id := range h.nodes {
 			keys = append(keys, id)
 		}
 		sort.Ints(keys)
-		nodesSlice := make([]*Node, 0, len(h.Nodes))
+		nodesSlice := make([]*node, 0, len(h.nodes))
 		for _, id := range keys {
-			node := h.Nodes[id]
-			if candidateIDs[node.ID] {
+			n := h.nodes[id]
+			if candidateIDs[n.ID] {
 				continue
 			}
-			nodesSlice = append(nodesSlice, node)
+			nodesSlice = append(nodesSlice, n)
 		}
 
 		// Skip the scan when every node is already a candidate, so the worker
@@ -900,17 +948,17 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 				end = len(nodesSlice)
 			}
 			wg.Add(1)
-			go func(nodesChunk []*Node) {
+			go func(nodesChunk []*node) {
 				defer wg.Done()
 				localHeap := candidateMaxHeap{}
 				heap.Init(&localHeap)
-				for _, node := range nodesChunk {
-					d, err := h.Distance(query, node.Vector)
+				for _, n := range nodesChunk {
+					d, err := h.metric.Distance(query, n.Vector)
 					if err != nil {
 						errsCh <- err
 						return
 					}
-					cand := candidate{node, d}
+					cand := candidate{n, d}
 					if localHeap.Len() < fallbackSize {
 						heap.Push(&localHeap, cand)
 					} else if localHeap.Len() > 0 && d < localHeap[0].dist {
@@ -968,14 +1016,14 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]core.Neighbor, error) {
 }
 
 // Stats returns simple statistics about the index.
-func (h *HNSWIndex) Stats() core.IndexStats {
-	h.Mu.RLock()
-	defer h.Mu.RUnlock()
-	count := len(h.Nodes)
+func (h *Index) Stats() core.IndexStats {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	count := len(h.nodes)
 	stats := core.IndexStats{
 		Count:            count,
-		Dimension:        h.Dimension,
-		Distance:         h.DistanceName,
+		Dimension:        h.dimension,
+		Distance:         h.metric.Name(),
 		FallbackSearches: h.fallbackSearches.Load(),
 	}
 	return stats
@@ -984,7 +1032,7 @@ func (h *HNSWIndex) Stats() core.IndexStats {
 // Save writes the index to the given writer using gob encoding.
 // The lock is taken by GobEncode; taking it here as well would deadlock
 // when a writer queues between the two read lock acquisitions.
-func (h *HNSWIndex) Save(w io.Writer) error {
+func (h *Index) Save(w io.Writer) error {
 	enc := gob.NewEncoder(w)
 	if err := enc.Encode(h); err != nil {
 		return err
@@ -993,9 +1041,9 @@ func (h *HNSWIndex) Save(w io.Writer) error {
 }
 
 // Load reads the index from the given reader using gob decoding.
-func (h *HNSWIndex) Load(r io.Reader) error {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
+func (h *Index) Load(r io.Reader) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	dec := gob.NewDecoder(r)
 	if err := dec.Decode(h); err != nil {
 		return err
@@ -1004,12 +1052,13 @@ func (h *HNSWIndex) Load(r io.Reader) error {
 }
 
 // Check interface compliance at compile time.
-var _ core.Index = (*HNSWIndex)(nil)
+var _ core.Index = (*Index)(nil)
+var _ core.BulkIndex = (*Index)(nil)
 
 // init registers types for gob encoding.
 func init() {
 	gob.Register(serializedIndex{})
 	gob.Register(serializedNode{})
-	gob.Register(&HNSWIndex{})
-	gob.Register(&Node{})
+	gob.Register(&Index{})
+	gob.Register(&node{})
 }

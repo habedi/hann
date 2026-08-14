@@ -125,7 +125,9 @@ The index has the following configurable parameters:
 - **M**: Controls the maximum number of neighbor connections per node. Higher values improve accuracy but increase
   memory and indexing time (typical range: 5–48).
 - **Ef**: Defines search breadth during insertion and searching. Higher values improve accuracy but
-  increase computational cost for indexing and searching (typical range: 10–200).
+  increase the computational cost for indexing and searching (typical range: 10–200).
+
+An index is created with `hnsw.New(dimension, ...)`, and the parameters are set with the `hnsw.WithM`, `hnsw.WithEf`, and `hnsw.WithMetric` options.
 
 #### PQIVF Index
 
@@ -151,6 +153,10 @@ The index has the following configurable parameters:
   value: 256).
 - **kMeansIters**: Number of iterations used to train the product quantization codebooks (recommended value: 25).
 
+An index is created with `pqivf.New(dimension, ...)`, and the parameters are set with the `pqivf.WithCoarseK`,
+`pqivf.WithNumSubquantizers`, `pqivf.WithPQK`, and `pqivf.WithKMeansIters` options. The index always uses the Euclidean
+metric.
+
 #### RPT Index
 
 The [`rpt`](rpt) package provides an implementation of the RPT index introduced
@@ -168,6 +174,9 @@ The index has the following configurable parameters:
   better concurrency during indexing but use more memory (typical value: 100).
 - **probeMargin**: Margin used to determine additional branches probed during searches. Higher values improve recall but
   increase search overhead because of additional distance computations (typical range: 0.1–0.5).
+
+An index is created with `rpt.New(dimension, ...)`, and the parameters are set with the `rpt.WithLeafCapacity`,
+`rpt.WithCandidateProjections`, `rpt.WithParallelThreshold`, `rpt.WithProbeMargin`, and `rpt.WithMetric` options.
 
 #### Logging
 

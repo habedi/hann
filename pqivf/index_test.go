@@ -20,6 +20,22 @@ import (
 // go test ./pqivf/ -run TestPQIVF_GoldenFile -update to refresh them.
 var update = flag.Bool("update", false, "regenerate golden test fixtures")
 
+// newIndex constructs an index with the given parameters through New and its
+// options, failing the test on a constructor error.
+func newIndex(t *testing.T, dim, coarseK, numSubquantizers, pqK, kMeansIters int) *pqivf.Index {
+	t.Helper()
+	idx, err := pqivf.New(dim,
+		pqivf.WithCoarseK(coarseK),
+		pqivf.WithNumSubquantizers(numSubquantizers),
+		pqivf.WithPQK(pqK),
+		pqivf.WithKMeansIters(kMeansIters),
+	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	return idx
+}
+
 func TestPQIVF_BasicOperations(t *testing.T) {
 	dim := 6
 	coarseK := 3
@@ -27,7 +43,7 @@ func TestPQIVF_BasicOperations(t *testing.T) {
 	pqK := 256
 	kMeansIters := 10
 
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+	idx := newIndex(t, dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// Test Add.
 	vec1 := []float32{1, 2, 3, 4, 5, 6}
@@ -61,7 +77,7 @@ func TestPQIVF_Search(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+	idx := newIndex(t, dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// Insert several vectors.
 	vectors := map[int][]float32{
@@ -100,7 +116,7 @@ func TestPQIVF_BulkOperations(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+	idx := newIndex(t, dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// BulkAdd a set of vectors.
 	vectors := map[int][]float32{
@@ -163,7 +179,7 @@ func TestPQIVF_SaveLoad(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+	idx := newIndex(t, dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// Insert a couple of vectors.
 	vectors := map[int][]float32{
@@ -182,7 +198,7 @@ func TestPQIVF_SaveLoad(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	newIdx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+	newIdx := newIndex(t, dim, coarseK, numSubquantizers, pqK, kMeansIters)
 	// Create a reader from the bytes of the buffer.
 	r := bytes.NewReader(buf.Bytes())
 	if err := newIdx.Load(r); err != nil {
@@ -200,7 +216,7 @@ func TestPQIVF_TrainAndSearch(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+	idx := newIndex(t, dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// Insert data.
 	vectors := map[int][]float32{
@@ -245,7 +261,7 @@ func TestPQIVF_ConcurrentOperations(t *testing.T) {
 	numSubquantizers := 2
 	pqK := 256
 	kMeansIters := 10
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+	idx := newIndex(t, dim, coarseK, numSubquantizers, pqK, kMeansIters)
 	numVectors := 1000
 	var wg sync.WaitGroup
 
@@ -281,13 +297,17 @@ func TestPQIVF_EdgeCases(t *testing.T) {
 	pqK := 256
 	kMeansIters := 5
 
-	// Test with zero dimension.
-	zeroDimIdx := pqivf.NewPQIVFIndex(0, coarseK, numSubquantizers, pqK, kMeansIters)
-	if err := zeroDimIdx.Add(1, []float32{}); err == nil {
-		t.Error("expected error when adding a vector to a zero-dimension index, but got none")
+	// A zero dimension is rejected by the constructor.
+	if _, err := pqivf.New(0,
+		pqivf.WithCoarseK(coarseK),
+		pqivf.WithNumSubquantizers(numSubquantizers),
+		pqivf.WithPQK(pqK),
+		pqivf.WithKMeansIters(kMeansIters),
+	); err == nil {
+		t.Error("expected error creating a zero-dimension index, but got none")
 	}
 
-	idx := pqivf.NewPQIVFIndex(dim, coarseK, numSubquantizers, pqK, kMeansIters)
+	idx := newIndex(t, dim, coarseK, numSubquantizers, pqK, kMeansIters)
 
 	// Train on empty index.
 	if err := idx.Train(); err == nil {
@@ -356,7 +376,7 @@ func TestPQIVF_EdgeCases(t *testing.T) {
 
 func TestPQIVF_ConcurrentSaveAdd(t *testing.T) {
 	dim := 6
-	idx := pqivf.NewPQIVFIndex(dim, 3, 2, 256, 10)
+	idx := newIndex(t, dim, 3, 2, 256, 10)
 
 	makeVec := func(id int) []float32 {
 		return []float32{
@@ -407,7 +427,7 @@ func TestPQIVF_ConcurrentSaveAdd(t *testing.T) {
 func TestPQIVF_ConcurrentUpdateSearch(t *testing.T) {
 	t.Setenv("HANN_SEED", "42")
 	dim := 6
-	idx := pqivf.NewPQIVFIndex(dim, 3, 2, 256, 10)
+	idx := newIndex(t, dim, 3, 2, 256, 10)
 
 	makeVec := func(id int) []float32 {
 		return []float32{
@@ -450,7 +470,7 @@ func TestPQIVF_ConcurrentUpdateSearch(t *testing.T) {
 
 func TestPQIVF_UpdateFailureKeepsEntry(t *testing.T) {
 	dim := 4
-	idx := pqivf.NewPQIVFIndex(dim, 2, 2, 256, 5)
+	idx := newIndex(t, dim, 2, 2, 256, 5)
 
 	if err := idx.Add(1, []float32{1, 1, 1, 1}); err != nil {
 		t.Fatalf("Add failed: %v", err)
@@ -473,7 +493,7 @@ func TestPQIVF_UpdateFailureKeepsEntry(t *testing.T) {
 
 func TestPQIVF_BulkUpdateFailureKeepsEntries(t *testing.T) {
 	dim := 4
-	idx := pqivf.NewPQIVFIndex(dim, 2, 2, 256, 5)
+	idx := newIndex(t, dim, 2, 2, 256, 5)
 
 	vectors := map[int][]float32{
 		1: {1, 1, 1, 1},
@@ -497,7 +517,7 @@ func TestPQIVF_BulkUpdateFailureKeepsEntries(t *testing.T) {
 
 func TestPQIVF_AtomicUpdateVsAdd(t *testing.T) {
 	dim := 4
-	idx := pqivf.NewPQIVFIndex(dim, 2, 2, 4, 5)
+	idx := newIndex(t, dim, 2, 2, 4, 5)
 
 	if err := idx.Add(7, []float32{1, 1, 1, 1}); err != nil {
 		t.Fatalf("Add failed: %v", err)
@@ -540,31 +560,69 @@ func TestPQIVF_AtomicUpdateVsAdd(t *testing.T) {
 
 func TestPQIVF_InvalidCoarseK(t *testing.T) {
 	for _, coarseK := range []int{0, -1} {
-		func() {
-			defer func() {
-				if r := recover(); r == nil {
-					t.Errorf("expected panic for coarseK=%d, but got none", coarseK)
-				}
-			}()
-			pqivf.NewPQIVFIndex(4, coarseK, 2, 256, 5)
-		}()
+		if _, err := pqivf.New(4, pqivf.WithCoarseK(coarseK)); err == nil {
+			t.Errorf("expected error for coarseK=%d, but got none", coarseK)
+		}
+	}
+}
+
+// TestPQIVF_NewValidation covers the remaining constructor errors: a
+// non-positive dimension, PQ codebook size, k-means iteration count, or
+// subquantizer count, and a dimension that the subquantizer count does not
+// divide.
+func TestPQIVF_NewValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		dim  int
+		opts []pqivf.Option
+	}{
+		{name: "zero dimension", dim: 0},
+		{name: "negative dimension", dim: -4},
+		{name: "zero pqK", dim: 4, opts: []pqivf.Option{pqivf.WithPQK(0)}},
+		{name: "negative pqK", dim: 4, opts: []pqivf.Option{pqivf.WithPQK(-1)}},
+		{name: "zero kMeansIters", dim: 4, opts: []pqivf.Option{pqivf.WithKMeansIters(0)}},
+		{name: "negative kMeansIters", dim: 4, opts: []pqivf.Option{pqivf.WithKMeansIters(-1)}},
+		{name: "zero numSubquantizers", dim: 4, opts: []pqivf.Option{pqivf.WithNumSubquantizers(0)}},
+		{name: "indivisible dimension", dim: 6, opts: []pqivf.Option{pqivf.WithNumSubquantizers(4)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := pqivf.New(tc.dim, tc.opts...); err == nil {
+				t.Errorf("expected error, but got none")
+			}
+		})
+	}
+}
+
+// TestPQIVF_DefaultNumSubquantizers checks the default subquantizer rule: the
+// largest of 8, 4, 2, and 1 that divides the dimension is chosen, so every
+// positive dimension yields a valid index without options.
+func TestPQIVF_DefaultNumSubquantizers(t *testing.T) {
+	for _, dim := range []int{16, 12, 6, 7} {
+		if _, err := pqivf.New(dim); err != nil {
+			t.Errorf("New(%d) with default options failed: %v", dim, err)
+		}
 	}
 }
 
 // pqivfFactory returns the factory shared by the property-based and the
 // concurrency tests.
-func pqivfFactory() testutil.Factory {
+func pqivfFactory(t *testing.T) testutil.Factory {
 	return testutil.Factory{
 		New: func() core.Index {
-			return pqivf.NewPQIVFIndex(16, 2, 2, 4, 5)
+			return newIndex(t, 16, 2, 2, 4, 5)
 		},
 		Train: func(idx core.Index) error {
-			return idx.(*pqivf.PQIVFIndex).Train()
+			trainer, ok := idx.(core.Trainer)
+			if !ok {
+				return fmt.Errorf("index does not implement core.Trainer")
+			}
+			return trainer.Train()
 		},
 		MinTrainSize:   4,
 		ExactDistances: false,
 		SortedResults:  true,
-		Distance:       core.Euclidean,
+		Metric:         core.Euclidean,
 	}
 }
 
@@ -578,7 +636,7 @@ func TestPQIVF_SyntheticRecall(t *testing.T) {
 	)
 	data := testutil.ClusteredData(42, n, dim, clusters)
 
-	idx := pqivf.NewPQIVFIndex(dim, 16, 2, 16, 10)
+	idx := newIndex(t, dim, 16, 2, 16, 10)
 	arg := make(map[int][]float32, len(data))
 	for id, vec := range data {
 		arg[id] = testutil.CopyVector(vec)
@@ -623,13 +681,13 @@ func TestPQIVF_PropertyOps(t *testing.T) {
 	for _, seed := range []int64{1, 2, 3, 4, 5} {
 		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
-			testutil.RunPropertyOps(t, pqivfFactory(), 16, seed, 140)
+			testutil.RunPropertyOps(t, pqivfFactory(t), 16, seed, 140)
 		})
 	}
 }
 
 func TestPQIVF_ConcurrentStress(t *testing.T) {
-	testutil.RunConcurrentOps(t, pqivfFactory(), 16, 8, 300)
+	testutil.RunConcurrentOps(t, pqivfFactory(t), 16, 8, 300)
 }
 
 // goldenExpected is the JSON shape of the golden fixture expectations.
@@ -655,7 +713,7 @@ func TestPQIVF_GoldenFile(t *testing.T) {
 	data, queries := goldenQueries()
 
 	if *update {
-		idx := pqivf.NewPQIVFIndex(8, 3, 2, 4, 5)
+		idx := newIndex(t, 8, 3, 2, 4, 5)
 		arg := make(map[int][]float32, len(data))
 		for id, vec := range data {
 			arg[id] = testutil.CopyVector(vec)
@@ -728,7 +786,7 @@ func TestPQIVF_GoldenFile(t *testing.T) {
 			t.Errorf("closing %s failed: %v", gobPath, err)
 		}
 	}()
-	idx := pqivf.NewPQIVFIndex(8, 3, 2, 4, 5)
+	idx := newIndex(t, 8, 3, 2, 4, 5)
 	if err := idx.Load(f); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -770,15 +828,19 @@ func TestPQIVF_GoldenFile(t *testing.T) {
 func TestPQIVF_DifferentialBulkSequential(t *testing.T) {
 	factory := testutil.Factory{
 		New: func() core.Index {
-			return pqivf.NewPQIVFIndex(16, 4, 2, 8, 10)
+			return newIndex(t, 16, 4, 2, 8, 10)
 		},
 		Train: func(idx core.Index) error {
-			return idx.(*pqivf.PQIVFIndex).Train()
+			trainer, ok := idx.(core.Trainer)
+			if !ok {
+				return fmt.Errorf("index does not implement core.Trainer")
+			}
+			return trainer.Train()
 		},
 		MinTrainSize:   4,
 		ExactDistances: false,
 		SortedResults:  true,
-		Distance:       core.Euclidean,
+		Metric:         core.Euclidean,
 	}
 	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
 }
@@ -788,7 +850,7 @@ func TestPQIVF_DifferentialBulkSequential(t *testing.T) {
 func TestPQIVF_FallbackSearchCounter(t *testing.T) {
 	// More clusters than the search probes, so a large k cannot be satisfied
 	// from the probed clusters alone and the brute-force fallback triggers.
-	pq := pqivf.NewPQIVFIndex(4, 8, 2, 2, 5)
+	pq := newIndex(t, 4, 8, 2, 2, 5)
 	for id := 0; id < 40; id++ {
 		vec := []float32{float32(id), float32(id + 1), float32(id + 2), float32(id + 3)}
 		if err := pq.Add(id, vec); err != nil {

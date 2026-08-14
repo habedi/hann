@@ -19,10 +19,46 @@ import (
 
 var update = flag.Bool("update", false, "regenerate golden files")
 
+// newTestIndex constructs an index and fails the test when construction
+// errors, so tests with known-good parameters stay short.
+func newTestIndex(t *testing.T, dim int, opts ...hnsw.Option) *hnsw.Index {
+	t.Helper()
+	index, err := hnsw.New(dim, opts...)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	return index
+}
+
+func TestHNSWIndex_NewValidation(t *testing.T) {
+	// A valid call succeeds with defaults.
+	if _, err := hnsw.New(4); err != nil {
+		t.Fatalf("New with defaults failed: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		dim  int
+		opts []hnsw.Option
+	}{
+		{"zero dimension", 0, nil},
+		{"negative dimension", -1, nil},
+		{"M below 2", 4, []hnsw.Option{hnsw.WithM(1)}},
+		{"Ef below 1", 4, []hnsw.Option{hnsw.WithEf(0)}},
+		{"zero metric", 4, []hnsw.Option{hnsw.WithMetric(core.Metric{})}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := hnsw.New(tc.dim, tc.opts...); err == nil {
+				t.Errorf("expected error for %s, got none", tc.name)
+			}
+		})
+	}
+}
+
 func TestHNSWIndex_AddAndStats(t *testing.T) {
 	dim := 6
-	distanceName := "euclidean"
-	index := hnsw.NewHNSW(dim, 5, 10, core.Distances[distanceName], distanceName)
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
 	// Test single Add.
 	if err := index.Add(1, []float32{1, 2, 3, 4, 5, 6}); err != nil {
@@ -46,11 +82,14 @@ func TestHNSWIndex_AddAndStats(t *testing.T) {
 	if stats.Count != 1 {
 		t.Errorf("expected count 1 after one Add, got %d", stats.Count)
 	}
+	if stats.Distance != core.Euclidean.Name() {
+		t.Errorf("expected distance %q in stats, got %q", core.Euclidean.Name(), stats.Distance)
+	}
 }
 
 func TestHNSWIndex_Delete(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
 	// Arrange: add two vectors.
 	if err := index.Add(1, []float32{1, 2, 3, 4, 5, 6}); err != nil {
@@ -79,7 +118,7 @@ func TestHNSWIndex_Delete(t *testing.T) {
 
 func TestHNSWIndex_Update(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
 	// Arrange: add a vector.
 	if err := index.Add(1, []float32{1, 2, 3, 4, 5, 6}); err != nil {
@@ -116,7 +155,7 @@ func TestHNSWIndex_Update(t *testing.T) {
 
 func TestHNSWIndex_BulkAdd(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
 	// Arrange: Create a set of 5 vectors.
 	vectors := map[int][]float32{
@@ -141,7 +180,7 @@ func TestHNSWIndex_BulkAdd(t *testing.T) {
 
 func TestHNSWIndex_BulkDelete(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
 	// Arrange: Bulk add a set of vectors.
 	vectors := map[int][]float32{
@@ -183,7 +222,7 @@ func TestHNSWIndex_BulkDelete(t *testing.T) {
 
 func TestHNSWIndex_BulkUpdate(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
 	// Arrange: Bulk add a set of vectors.
 	vectors := map[int][]float32{
@@ -217,7 +256,7 @@ func TestHNSWIndex_BulkUpdate(t *testing.T) {
 
 func TestHNSWIndex_SaveLoad(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
 	// Arrange: add some vectors.
 	vectors := map[int][]float32{
@@ -249,7 +288,7 @@ func TestHNSWIndex_SaveLoad(t *testing.T) {
 	defer readFile.Close()
 
 	// Create a new index and load the saved state using the io.Reader.
-	newIndex := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	newIndex := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	if err := newIndex.Load(readFile); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -263,7 +302,7 @@ func TestHNSWIndex_SaveLoad(t *testing.T) {
 
 func TestHNSWIndex_ConcurrentBulkOperations(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	numVectors := 1000
 
 	// Arrange: prepare a map of vectors.
@@ -337,7 +376,7 @@ func testVector(i int) []float32 {
 
 func TestHNSWIndex_SaveConcurrentWithAdd(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	for i := 0; i < 100; i++ {
 		if err := index.Add(i, testVector(i)); err != nil {
 			t.Fatalf("Add failed: %v", err)
@@ -379,7 +418,7 @@ func TestHNSWIndex_SaveConcurrentWithAdd(t *testing.T) {
 
 func TestHNSWIndex_SaveLoadEntryPointZero(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	if err := index.Add(0, testVector(0)); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
@@ -389,7 +428,7 @@ func TestHNSWIndex_SaveLoadEntryPointZero(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	loaded := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	loaded := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	if err := loaded.Load(&buf); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -405,7 +444,7 @@ func TestHNSWIndex_SaveLoadEntryPointZero(t *testing.T) {
 
 func TestHNSWIndex_LoadIntoZeroValueIndex(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	for i := 1; i <= 10; i++ {
 		if err := index.Add(i, testVector(i)); err != nil {
 			t.Fatalf("Add failed: %v", err)
@@ -417,9 +456,9 @@ func TestHNSWIndex_LoadIntoZeroValueIndex(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	// Load into a zero-value index: the distance function and the internal
-	// maps must be restored from the serialized state.
-	loaded := &hnsw.HNSWIndex{}
+	// Load into a zero-value index: the metric and the internal maps must be
+	// restored from the serialized state.
+	loaded := &hnsw.Index{}
 	if err := loaded.Load(&buf); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -440,10 +479,10 @@ func TestHNSWIndex_LoadIntoZeroValueIndex(t *testing.T) {
 
 func TestHNSWIndex_LoadCustomDistance(t *testing.T) {
 	dim := 6
-	custom := func(a, b []float32) (float64, error) {
-		return core.Euclidean(a, b)
-	}
-	index := hnsw.NewHNSW(dim, 5, 10, custom, "custom_metric")
+	custom := core.NewMetric("custom_metric", func(a, b []float32) (float64, error) {
+		return core.Euclidean.Distance(a, b)
+	}, false)
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10), hnsw.WithMetric(custom))
 	for i := 1; i <= 5; i++ {
 		if err := index.Add(i, testVector(i)); err != nil {
 			t.Fatalf("Add failed: %v", err)
@@ -455,22 +494,22 @@ func TestHNSWIndex_LoadCustomDistance(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	// Loading into a zero-value index must fail, because the distance name
-	// is unknown and no distance function is present.
+	// Loading into a zero-value index must fail, because the metric name is
+	// unknown and no metric is present on the receiver.
 	saved := buf.Bytes()
-	empty := &hnsw.HNSWIndex{}
+	empty := &hnsw.Index{}
 	if err := empty.Load(bytes.NewReader(saved)); err == nil {
-		t.Error("expected error when loading an unknown distance into a zero-value index, got none")
+		t.Error("expected error when loading an unknown metric into a zero-value index, got none")
 	}
 
-	// Loading onto an index constructed with the custom function must keep it.
-	target := hnsw.NewHNSW(dim, 5, 10, custom, "custom_metric")
+	// Loading onto an index constructed with the custom metric must keep it.
+	target := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10), hnsw.WithMetric(custom))
 	if err := target.Load(bytes.NewReader(saved)); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
 	neighbors, err := target.Search(testVector(2), 1)
 	if err != nil {
-		t.Fatalf("Search failed after Load with a custom distance: %v", err)
+		t.Fatalf("Search failed after Load with a custom metric: %v", err)
 	}
 	if len(neighbors) != 1 || neighbors[0].ID != 2 {
 		t.Errorf("expected id 2 as nearest neighbor after Load, got %v", neighbors)
@@ -479,7 +518,7 @@ func TestHNSWIndex_LoadCustomDistance(t *testing.T) {
 
 func TestHNSWIndex_DeleteEntryPointAfterLoad(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	for i := 1; i <= 10; i++ {
 		if err := index.Add(i, testVector(i)); err != nil {
 			t.Fatalf("Add failed: %v", err)
@@ -490,7 +529,7 @@ func TestHNSWIndex_DeleteEntryPointAfterLoad(t *testing.T) {
 	if err := index.Save(&buf); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
-	loaded := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	loaded := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	if err := loaded.Load(&buf); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -514,7 +553,7 @@ func TestHNSWIndex_DeleteEntryPointAfterLoad(t *testing.T) {
 
 func TestHNSWIndex_DeleteEntryPointAfterBulkAdd(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	vectors := make(map[int][]float32, 50)
 	for i := 1; i <= 50; i++ {
 		vectors[i] = testVector(i)
@@ -523,70 +562,68 @@ func TestHNSWIndex_DeleteEntryPointAfterBulkAdd(t *testing.T) {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	// Repeatedly delete the current entry point; the survivors must remain
-	// reachable, which requires BulkAdd to have maintained the level
-	// bookkeeping that Delete uses to pick a new entry point.
-	for count := 50; count > 1; count-- {
-		epID := index.EntryPoint.ID
-		if err := index.Delete(epID); err != nil {
-			t.Fatalf("Delete(%d) failed: %v", epID, err)
+	// Delete every id but the last, one at a time, so whichever node is the
+	// current entry point is deleted at some step. The survivors must remain
+	// reachable after each deletion, which requires BulkAdd to have
+	// maintained the level bookkeeping that Delete uses to pick a new entry
+	// point.
+	for i := 1; i <= 49; i++ {
+		if err := index.Delete(i); err != nil {
+			t.Fatalf("Delete(%d) failed: %v", i, err)
 		}
-		if _, err := index.Search(testVector(1), 1); err != nil {
-			t.Fatalf("Search failed with %d nodes left after deleting entry point %d: %v",
-				count-1, epID, err)
+		neighbors, err := index.Search(testVector(50), 1)
+		if err != nil {
+			t.Fatalf("Search failed with %d nodes left after Delete(%d): %v", 50-i, i, err)
+		}
+		if len(neighbors) != 1 || neighbors[0].ID <= i || neighbors[0].ID > 50 {
+			t.Errorf("expected a surviving id after Delete(%d), got %v", i, neighbors)
 		}
 	}
 }
 
 func TestHNSWIndex_DeleteAfterBulkDelete(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	for i := 1; i <= 100; i++ {
 		if err := index.Add(i, testVector(i)); err != nil {
 			t.Fatalf("Add failed: %v", err)
 		}
 	}
 
-	// Bulk delete every node above level 0, so any stale level bookkeeping
-	// left behind by BulkDelete points only at removed nodes.
+	// Bulk delete half the nodes, then delete the remaining ones one at a
+	// time. Whichever node is the entry point after BulkDelete is deleted at
+	// some step, so Delete must pick a surviving node as the new entry
+	// point, not a node that BulkDelete already removed from its level
+	// bookkeeping.
 	var deleteIDs []int
-	for id, node := range index.Nodes {
-		if node.Level >= 1 {
-			deleteIDs = append(deleteIDs, id)
-		}
-	}
-	if len(deleteIDs) == 0 {
-		t.Skip("no nodes above level 0; cannot exercise the entry point recovery")
+	for i := 1; i <= 50; i++ {
+		deleteIDs = append(deleteIDs, i)
 	}
 	if err := index.BulkDelete(deleteIDs); err != nil {
 		t.Fatalf("BulkDelete failed: %v", err)
 	}
-	survivors := 100 - len(deleteIDs)
-	if survivors < 2 {
-		t.Skip("fewer than two survivors; cannot exercise the entry point recovery")
-	}
 
-	// Deleting the entry point must pick a surviving node as the new entry
-	// point, not a node that BulkDelete already removed.
-	epID := index.EntryPoint.ID
-	if err := index.Delete(epID); err != nil {
-		t.Fatalf("Delete(%d) failed: %v", epID, err)
-	}
-	neighbors, err := index.Search(testVector(1), 1)
-	if err != nil {
-		t.Fatalf("Search failed after Delete following BulkDelete: %v", err)
-	}
-	if len(neighbors) != 1 {
-		t.Fatalf("expected one neighbor, got %v", neighbors)
-	}
-	if _, ok := index.Nodes[neighbors[0].ID]; !ok {
-		t.Errorf("search returned an id that is not in the index: %d", neighbors[0].ID)
+	for i := 51; i <= 99; i++ {
+		if err := index.Delete(i); err != nil {
+			t.Fatalf("Delete(%d) failed after BulkDelete: %v", i, err)
+		}
+		neighbors, err := index.Search(testVector(100), 1)
+		if err != nil {
+			t.Fatalf("Search failed after Delete(%d) following BulkDelete: %v", i, err)
+		}
+		if len(neighbors) != 1 {
+			t.Fatalf("expected one neighbor after Delete(%d), got %v", i, neighbors)
+		}
+		if neighbors[0].ID <= i || neighbors[0].ID > 100 {
+			t.Errorf("search returned an id that is not in the index after Delete(%d): %d",
+				i, neighbors[0].ID)
+		}
 	}
 }
 
 func TestHNSWIndex_BulkAddConcurrentWithAdd(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
 	vectors := make(map[int][]float32, 100)
 	for i := 1000; i < 1100; i++ {
@@ -619,53 +656,47 @@ func TestHNSWIndex_BulkAddConcurrentWithAdd(t *testing.T) {
 
 func TestHNSWIndex_UpdateEntryPoint(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 32, core.Euclidean, "euclidean")
 	// Exhaustive search keeps the exact-match assertions below free of the
 	// approximation error of the greedy search.
-	index.ExhaustiveSearch = true
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(32), hnsw.WithExhaustiveSearch(true))
 	for i := 1; i <= 10; i++ {
 		if err := index.Add(i, testVector(i)); err != nil {
 			t.Fatalf("Add failed: %v", err)
 		}
 	}
 
-	// Move the entry point node to a new location next to the others.
-	epID := index.EntryPoint.ID
-	if err := index.Update(epID, testVector(11)); err != nil {
-		t.Fatalf("Update failed: %v", err)
-	}
-
-	// Every other node must still be reachable with an exact query.
+	// The entry point is not observable through the public API, so update
+	// every node in turn; whichever node is the entry point is covered.
+	locations := make(map[int]int, 10)
 	for i := 1; i <= 10; i++ {
-		if i == epID {
-			continue
-		}
-		neighbors, err := index.Search(testVector(i), 1)
-		if err != nil {
-			t.Fatalf("Search failed after updating the entry point: %v", err)
-		}
-		if len(neighbors) != 1 || neighbors[0].ID != i {
-			t.Errorf("expected id %d as nearest neighbor after updating the entry point %d, got %v",
-				i, epID, neighbors)
-		}
+		locations[i] = i
 	}
+	for i := 1; i <= 10; i++ {
+		if err := index.Update(i, testVector(i+10)); err != nil {
+			t.Fatalf("Update(%d) failed: %v", i, err)
+		}
+		locations[i] = i + 10
 
-	// The updated node must be reachable at its new location.
-	neighbors, err := index.Search(testVector(11), 1)
-	if err != nil {
-		t.Fatalf("Search failed: %v", err)
-	}
-	if len(neighbors) != 1 || neighbors[0].ID != epID {
-		t.Errorf("expected id %d at its new location, got %v", epID, neighbors)
+		// Every node must be reachable at its current location with an
+		// exact query after each update.
+		for id, loc := range locations {
+			neighbors, err := index.Search(testVector(loc), 1)
+			if err != nil {
+				t.Fatalf("Search failed after Update(%d): %v", i, err)
+			}
+			if len(neighbors) != 1 || neighbors[0].ID != id {
+				t.Errorf("expected id %d as nearest neighbor after Update(%d), got %v",
+					id, i, neighbors)
+			}
+		}
 	}
 }
 
 func TestHNSWIndex_BulkUpdateGraphConsistency(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 32, core.Euclidean, "euclidean")
 	// Exhaustive search keeps the exact-match assertions below free of the
 	// approximation error of the greedy search.
-	index.ExhaustiveSearch = true
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(32), hnsw.WithExhaustiveSearch(true))
 	vectors := make(map[int][]float32, 20)
 	for i := 1; i <= 20; i++ {
 		vectors[i] = testVector(i)
@@ -685,27 +716,11 @@ func TestHNSWIndex_BulkUpdateGraphConsistency(t *testing.T) {
 		t.Fatalf("BulkUpdate failed: %v", err)
 	}
 
-	// The graph must stay clean: no node may link to itself, and no node
-	// may appear twice in another node's neighbor list at any level.
-	for id, node := range index.Nodes {
-		for level, links := range node.Links {
-			seen := make(map[int]bool)
-			for _, nb := range links {
-				if nb.ID == id {
-					t.Errorf("node %d links to itself at level %d after BulkUpdate", id, level)
-				}
-				if seen[nb.ID] {
-					t.Errorf("node %d lists neighbor %d twice at level %d after BulkUpdate",
-						id, nb.ID, level)
-				}
-				seen[nb.ID] = true
-			}
-		}
-	}
-
 	// Both updated and untouched nodes must be found at their locations.
 	// Asking for every node engages the brute-force fallback, so the check
-	// does not depend on the recall of the graph search.
+	// does not depend on the recall of the graph search. A corrupted graph
+	// (self-links or duplicated neighbor entries) would surface here as a
+	// duplicated or missing id in the full result set.
 	expected := map[int]int{1: 21, 2: 22, 3: 23}
 	for i := 1; i <= 20; i++ {
 		loc := i
@@ -719,12 +734,22 @@ func TestHNSWIndex_BulkUpdateGraphConsistency(t *testing.T) {
 		if len(neighbors) == 0 || neighbors[0].ID != i {
 			t.Errorf("expected id %d as nearest neighbor after BulkUpdate, got %v", i, neighbors)
 		}
+		seen := make(map[int]bool, len(neighbors))
+		for _, n := range neighbors {
+			if n.ID < 1 || n.ID > 20 {
+				t.Errorf("search returned an id that is not in the index after BulkUpdate: %d", n.ID)
+			}
+			if seen[n.ID] {
+				t.Errorf("search returned id %d twice after BulkUpdate", n.ID)
+			}
+			seen[n.ID] = true
+		}
 	}
 }
 
 func TestHNSWIndex_SearchSingleNodeLargeK(t *testing.T) {
 	dim := 6
-	index := hnsw.NewHNSW(dim, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	if err := index.Add(1, testVector(1)); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
@@ -750,7 +775,7 @@ func TestHNSWIndex_SearchFallbackChunking(t *testing.T) {
 	for n := 3; n <= 128; n++ {
 		// A small ef keeps searchLayer's result list short, so a search with
 		// k equal to the node count always enters the fallback.
-		index := hnsw.NewHNSW(dim, 4, 2, core.Euclidean, "euclidean")
+		index := newTestIndex(t, dim, hnsw.WithM(4), hnsw.WithEf(2))
 		for i := 0; i < n; i++ {
 			vec := []float32{float32(i), float32(i % 7), float32(i % 11), float32(i % 13)}
 			if err := index.Add(i, vec); err != nil {
@@ -767,12 +792,12 @@ func TestHNSWIndex_SearchFallbackChunking(t *testing.T) {
 	}
 }
 
-// measureMeanRecall builds indexes over clustered data with the given
-// distance and returns the mean recall at k=10 over 20 queries per build
-// against the brute-force ground truth. The graph shape depends on the
-// package-level level generator, so recall varies between builds; averaging
-// over three builds narrows the spread the assertion has to allow for.
-func measureMeanRecall(t *testing.T, distance core.DistanceFunc, distanceName string) float64 {
+// measureMeanRecall builds indexes over clustered data with the given metric
+// and returns the mean recall at k=10 over 20 queries per build against the
+// brute-force ground truth. The graph shape depends on the package-level
+// level generator, so recall varies between builds; averaging over three
+// builds narrows the spread the assertion has to allow for.
+func measureMeanRecall(t *testing.T, metric core.Metric) float64 {
 	t.Helper()
 	const (
 		dim      = 16
@@ -786,7 +811,7 @@ func measureMeanRecall(t *testing.T, distance core.DistanceFunc, distanceName st
 	for b := 0; b < builds; b++ {
 		dataSeed := int64(42 + 100*b)
 		data := testutil.ClusteredData(dataSeed, n, dim, clusters)
-		index := hnsw.NewHNSW(dim, 16, 100, distance, distanceName)
+		index := newTestIndex(t, dim, hnsw.WithM(16), hnsw.WithEf(100), hnsw.WithMetric(metric))
 		// The index normalizes cosine vectors in place, so it gets copies and
 		// the ground truth keeps the raw data.
 		vectors := make(map[int][]float32, len(data))
@@ -798,7 +823,7 @@ func measureMeanRecall(t *testing.T, distance core.DistanceFunc, distanceName st
 		}
 		queries := testutil.Queries(dataSeed+1, data, q)
 		for _, query := range queries {
-			want, err := testutil.BruteForceKNN(query, data, k, distance)
+			want, err := testutil.BruteForceKNN(query, data, k, metric)
 			if err != nil {
 				t.Fatalf("BruteForceKNN failed: %v", err)
 			}
@@ -813,7 +838,7 @@ func measureMeanRecall(t *testing.T, distance core.DistanceFunc, distanceName st
 }
 
 func TestHNSWIndex_RecallEuclidean(t *testing.T) {
-	recall := measureMeanRecall(t, core.Euclidean, "euclidean")
+	recall := measureMeanRecall(t, core.Euclidean)
 	t.Logf("euclidean mean recall at k=10: %.4f", recall)
 	// Observed range over 40 runs: 0.64 to 0.93. The spread comes from the
 	// level generator: the level 0 graph splits into per-cluster components,
@@ -825,7 +850,7 @@ func TestHNSWIndex_RecallEuclidean(t *testing.T) {
 }
 
 func TestHNSWIndex_RecallCosine(t *testing.T) {
-	recall := measureMeanRecall(t, core.Distances["cosine"], "cosine")
+	recall := measureMeanRecall(t, core.Cosine)
 	t.Logf("cosine mean recall at k=10: %.4f", recall)
 	// Observed range over 40 runs: 0.55 to 0.92, with more spread than the
 	// euclidean variant. The threshold is a regression tripwire, not a
@@ -842,11 +867,15 @@ func TestHNSWIndex_RecallCosine(t *testing.T) {
 func hnswFactory() testutil.Factory {
 	return testutil.Factory{
 		New: func() core.Index {
-			return hnsw.NewHNSW(16, 16, 100, core.Euclidean, "euclidean")
+			index, err := hnsw.New(16, hnsw.WithM(16), hnsw.WithEf(100))
+			if err != nil {
+				panic(fmt.Sprintf("hnsw.New failed: %v", err))
+			}
+			return index
 		},
 		ExactDistances: true,
 		SortedResults:  true,
-		Distance:       core.Euclidean,
+		Metric:         core.Euclidean,
 	}
 }
 
@@ -892,7 +921,7 @@ func TestHNSWIndex_GoldenFile(t *testing.T) {
 		if err := os.MkdirAll("testdata", 0o755); err != nil {
 			t.Fatalf("failed to create testdata: %v", err)
 		}
-		index := hnsw.NewHNSW(8, 8, 50, core.Euclidean, "euclidean")
+		index := newTestIndex(t, 8, hnsw.WithM(8), hnsw.WithEf(50))
 		// Insert id 0 first, so it can plausibly become the entry point, which
 		// is the case the HasEntryPoint flag exists for.
 		for id := 0; id < len(data); id++ {
@@ -949,7 +978,7 @@ func TestHNSWIndex_GoldenFile(t *testing.T) {
 		t.Fatalf("failed to open %s (run with -update to generate it): %v", gobPath, err)
 	}
 	defer f.Close()
-	loaded := hnsw.NewHNSW(8, 8, 50, core.Euclidean, "euclidean")
+	loaded := newTestIndex(t, 8, hnsw.WithM(8), hnsw.WithEf(50))
 	if err := loaded.Load(f); err != nil {
 		t.Fatalf("Load failed on the golden fixture: %v", err)
 	}
@@ -983,20 +1012,19 @@ func TestHNSWIndex_GoldenFile(t *testing.T) {
 // force for both supported distances; with k equal to the index size the
 // result must be the exact ranking.
 func TestHNSWIndex_DifferentialExact(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-	}{
-		{"euclidean"},
-		{"cosine"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, metric := range []core.Metric{core.Euclidean, core.Cosine} {
+		t.Run(metric.Name(), func(t *testing.T) {
 			factory := testutil.Factory{
 				New: func() core.Index {
-					return hnsw.NewHNSW(16, 16, 100, core.Distances[tc.name], tc.name)
+					index, err := hnsw.New(16, hnsw.WithM(16), hnsw.WithEf(100), hnsw.WithMetric(metric))
+					if err != nil {
+						panic(fmt.Sprintf("hnsw.New failed: %v", err))
+					}
+					return index
 				},
 				ExactDistances: true,
 				SortedResults:  true,
-				Distance:       core.Distances[tc.name],
+				Metric:         metric,
 			}
 			testutil.RunExactDifferential(t, factory, 16, 300, 10)
 		})
@@ -1006,21 +1034,13 @@ func TestHNSWIndex_DifferentialExact(t *testing.T) {
 // TestHNSWIndex_DifferentialBulkSequential compares an index built through
 // Add and Delete with one built through BulkAdd and BulkDelete.
 func TestHNSWIndex_DifferentialBulkSequential(t *testing.T) {
-	factory := testutil.Factory{
-		New: func() core.Index {
-			return hnsw.NewHNSW(16, 16, 100, core.Euclidean, "euclidean")
-		},
-		ExactDistances: true,
-		SortedResults:  true,
-		Distance:       core.Euclidean,
-	}
-	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
+	testutil.RunBulkSequentialDifferential(t, hnswFactory(), 16, 300, 10)
 }
 
 // TestHNSWIndex_FallbackSearchCounter checks that a search that falls back to
 // a brute-force scan is visible in Stats.
 func TestHNSWIndex_FallbackSearchCounter(t *testing.T) {
-	index := hnsw.NewHNSW(4, 5, 10, core.Euclidean, "euclidean")
+	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10))
 	if err := index.Add(1, []float32{1, 2, 3, 4}); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}

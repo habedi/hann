@@ -34,8 +34,11 @@ func BenchHNSWIndexFashionMNIST() {
 		dimension := 784
 		M := 32
 		ef := 300
-		distanceName := "euclidean"
-		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
+		index, err := hnsw.New(dimension, hnsw.WithM(M), hnsw.WithEf(ef))
+		if err != nil {
+			log.Fatalf("Failed to create HNSW index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "fashion-mnist-784-euclidean",
@@ -45,10 +48,11 @@ func BenchHNSWIndexFashionMNIST() {
 func BenchHNSWIndexGlove25() {
 	factory := func() core.Index {
 		dimension := 25
-		M := 16
-		ef := 100
-		distanceName := "cosine"
-		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
+		index, err := hnsw.New(dimension, hnsw.WithMetric(core.Cosine))
+		if err != nil {
+			log.Fatalf("Failed to create HNSW index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "glove-25-angular",
@@ -58,10 +62,11 @@ func BenchHNSWIndexGlove25() {
 func BenchHNSWIndexGlove200() {
 	factory := func() core.Index {
 		dimension := 200
-		M := 16
-		ef := 100
-		distanceName := "cosine"
-		return hnsw.NewHNSW(dimension, M, ef, core.Distances[distanceName], distanceName)
+		index, err := hnsw.New(dimension, hnsw.WithMetric(core.Cosine))
+		if err != nil {
+			log.Fatalf("Failed to create HNSW index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "glove-200-angular",

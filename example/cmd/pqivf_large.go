@@ -4,6 +4,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/example"
 	"github.com/habedi/hann/pqivf"
@@ -17,11 +19,11 @@ func main() {
 func PQIVFIndexGIST() {
 	factory := func() core.Index {
 		dimension := 960
-		coarseK := 16
-		numSubquantizers := 8
-		pqK := 256
-		kMeansIters := 10
-		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters)
+		index, err := pqivf.New(dimension, pqivf.WithPQK(256))
+		if err != nil {
+			log.Fatalf("Failed to create PQIVF index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "gist-960-euclidean",

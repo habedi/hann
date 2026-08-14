@@ -31,11 +31,11 @@ func main() {
 func BenchPQIVFIndexFashionMNIST() {
 	factory := func() core.Index {
 		dimension := 784
-		coarseK := 16
-		numSubquantizers := 8
-		pqK := 256
-		kMeansIters := 10
-		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters)
+		index, err := pqivf.New(dimension, pqivf.WithPQK(256))
+		if err != nil {
+			log.Fatalf("Failed to create PQIVF index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "fashion-mnist-784-euclidean",
@@ -45,11 +45,11 @@ func BenchPQIVFIndexFashionMNIST() {
 func BenchPQIVFIndexSIFT() {
 	factory := func() core.Index {
 		dimension := 128
-		coarseK := 16
-		numSubquantizers := 8
-		pqK := 256
-		kMeansIters := 25
-		return pqivf.NewPQIVFIndex(dimension, coarseK, numSubquantizers, pqK, kMeansIters)
+		index, err := pqivf.New(dimension, pqivf.WithPQK(256), pqivf.WithKMeansIters(25))
+		if err != nil {
+			log.Fatalf("Failed to create PQIVF index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "sift-128-euclidean",

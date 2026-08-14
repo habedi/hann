@@ -24,7 +24,7 @@ func RunExactDifferential(t *testing.T, f Factory, dim, n, numQueries int) {
 	for id, vec := range data {
 		arg[id] = CopyVector(vec)
 	}
-	if err := idx.BulkAdd(arg); err != nil {
+	if err := core.BulkAdd(idx, arg); err != nil {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 	if f.Train != nil {
@@ -37,7 +37,7 @@ func RunExactDifferential(t *testing.T, f Factory, dim, n, numQueries int) {
 		if err != nil {
 			t.Fatalf("query %d: Search failed: %v", qi, err)
 		}
-		wantDists, err := rankedDistances(query, data, f.Distance)
+		wantDists, err := rankedDistances(query, data, f.Metric)
 		if err != nil {
 			t.Fatalf("query %d: reference distances failed: %v", qi, err)
 		}
@@ -73,7 +73,7 @@ func RunBulkSequentialDifferential(t *testing.T, f Factory, dim, n, numQueries i
 	for id, vec := range data {
 		arg[id] = CopyVector(vec)
 	}
-	if err := bulk.BulkAdd(arg); err != nil {
+	if err := core.BulkAdd(bulk, arg); err != nil {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
@@ -88,7 +88,7 @@ func RunBulkSequentialDifferential(t *testing.T, f Factory, dim, n, numQueries i
 			t.Fatalf("Delete(%d) failed: %v", id, err)
 		}
 	}
-	if err := bulk.BulkDelete(removed); err != nil {
+	if err := core.BulkDelete(bulk, removed); err != nil {
 		t.Fatalf("BulkDelete failed: %v", err)
 	}
 	for _, id := range removed {
@@ -122,7 +122,7 @@ func RunBulkSequentialDifferential(t *testing.T, f Factory, dim, n, numQueries i
 		if !f.ExactDistances {
 			continue
 		}
-		wantDists, err := rankedDistances(query, data, f.Distance)
+		wantDists, err := rankedDistances(query, data, f.Metric)
 		if err != nil {
 			t.Fatalf("query %d: reference distances failed: %v", qi, err)
 		}
@@ -137,10 +137,10 @@ func RunBulkSequentialDifferential(t *testing.T, f Factory, dim, n, numQueries i
 
 // rankedDistances returns the distances from the query to every data point in
 // non-decreasing order, computed independently of any index.
-func rankedDistances(query []float32, data map[int][]float32, dist core.DistanceFunc) ([]float64, error) {
+func rankedDistances(query []float32, data map[int][]float32, metric core.Metric) ([]float64, error) {
 	out := make([]float64, 0, len(data))
 	for _, vec := range data {
-		d, err := dist(query, vec)
+		d, err := metric.Distance(query, vec)
 		if err != nil {
 			return nil, err
 		}

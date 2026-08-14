@@ -22,17 +22,20 @@ import (
 // intentional format change.
 var update = flag.Bool("update", false, "regenerate the golden files under testdata")
 
-const (
-	defaultLeafCapacity         = 10
-	defaultCandidateProjections = 3
-	defaultParallelThreshold    = 100
-	defaultProbeMargin          = 0.15
-)
+// mustNew creates an index and fails the test when the constructor returns an
+// error.
+func mustNew(t *testing.T, dim int, opts ...rpt.Option) *rpt.Index {
+	t.Helper()
+	idx, err := rpt.New(dim, opts...)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	return idx
+}
 
 func TestRPTIndex_BasicOperations(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	idx := mustNew(t, dim)
 
 	// Test Add.
 	vec1 := []float32{1, 2, 3, 4, 5, 6}
@@ -78,8 +81,7 @@ func TestRPTIndex_BasicOperations(t *testing.T) {
 
 func TestRPTIndex_Search(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	idx := mustNew(t, dim)
 
 	// Insert several vectors.
 	vectors := map[int][]float32{
@@ -122,8 +124,7 @@ func TestRPTIndex_Search(t *testing.T) {
 
 func TestRPTIndex_BulkOperations(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	idx := mustNew(t, dim)
 
 	// BulkAdd several vectors.
 	vectors := map[int][]float32{
@@ -179,8 +180,7 @@ func TestRPTIndex_BulkOperations(t *testing.T) {
 
 func TestRPTIndex_SaveLoad(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	idx := mustNew(t, dim)
 	// Insert a couple of vectors.
 	vectors := map[int][]float32{
 		1: {1, 2, 3, 4, 5, 6},
@@ -197,8 +197,7 @@ func TestRPTIndex_SaveLoad(t *testing.T) {
 	}
 
 	// Create a new index and load from the buffer.
-	newIdx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	newIdx := mustNew(t, dim)
 	r := bytes.NewReader(buf.Bytes())
 	if err := newIdx.Load(r); err != nil {
 		t.Fatalf("Load failed: %v", err)
@@ -212,8 +211,7 @@ func TestRPTIndex_SaveLoad(t *testing.T) {
 
 func TestRPTIndex_ConcurrentOperations(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	idx := mustNew(t, dim)
 	numVectors := 1000
 	var wg sync.WaitGroup
 
@@ -244,8 +242,7 @@ func TestRPTIndex_ConcurrentOperations(t *testing.T) {
 
 func TestRPTIndex_ErrorOnWrongVectorDimension(t *testing.T) {
 	dim := 6
-	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	idx := mustNew(t, dim)
 
 	// Test Add with wrong vector dimension.
 	wrongVec := []float32{1, 2, 3}
@@ -265,8 +262,7 @@ func TestRPTIndex_ErrorOnWrongVectorDimension(t *testing.T) {
 
 func TestRPTIndex_EdgeCases(t *testing.T) {
 	dim := 4
-	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	idx := mustNew(t, dim)
 
 	// Search on empty index.
 	if _, err := idx.Search([]float32{1, 2, 3, 4}, 1); err != nil {
@@ -302,14 +298,12 @@ func TestRPTIndex_EdgeCases(t *testing.T) {
 	}
 
 	// Save and load empty index.
-	emptyIdx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	emptyIdx := mustNew(t, dim)
 	var buf bytes.Buffer
 	if err := emptyIdx.Save(&buf); err != nil {
 		t.Fatalf("Save on empty index failed: %v", err)
 	}
-	newEmptyIdx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	newEmptyIdx := mustNew(t, dim)
 	if err := newEmptyIdx.Load(bytes.NewReader(buf.Bytes())); err != nil {
 		t.Fatalf("Load on empty index failed: %v", err)
 	}
@@ -329,7 +323,11 @@ func makeVector(rnd *rand.Rand, dim int) []float32 {
 // Run with the race detector to catch unlocked map access.
 func TestRPTIndex_ConcurrentSearchWithWrites(t *testing.T) {
 	dim := 8
-	idx := rpt.NewRPTIndex(dim, 5, 2, 1<<30, 0.1)
+	idx := mustNew(t, dim,
+		rpt.WithLeafCapacity(5),
+		rpt.WithCandidateProjections(2),
+		rpt.WithParallelThreshold(1<<30),
+		rpt.WithProbeMargin(0.1))
 	rnd := rand.New(rand.NewSource(1))
 	for i := 0; i < 500; i++ {
 		if err := idx.Add(i, makeVector(rnd, dim)); err != nil {
@@ -379,7 +377,11 @@ func TestRPTIndex_ConcurrentSearchWithWrites(t *testing.T) {
 // when writers contend for the lock while a save is in progress.
 func TestRPTIndex_SaveWithConcurrentWriters(t *testing.T) {
 	dim := 8
-	idx := rpt.NewRPTIndex(dim, 5, 2, 1<<30, 0.1)
+	idx := mustNew(t, dim,
+		rpt.WithLeafCapacity(5),
+		rpt.WithCandidateProjections(2),
+		rpt.WithParallelThreshold(1<<30),
+		rpt.WithProbeMargin(0.1))
 	rnd := rand.New(rand.NewSource(2))
 	for i := 0; i < 100; i++ {
 		if err := idx.Add(i, makeVector(rnd, dim)); err != nil {
@@ -440,7 +442,11 @@ func TestRPTIndex_ConcurrentMultiProbeSearch(t *testing.T) {
 	// A very large probe margin makes every internal node probe both children,
 	// and a leaf capacity of 5 allows leaves whose slices have spare capacity
 	// that can hold the sibling's points.
-	idx := rpt.NewRPTIndex(dim, 5, 1, 1<<30, 1e9)
+	idx := mustNew(t, dim,
+		rpt.WithLeafCapacity(5),
+		rpt.WithCandidateProjections(1),
+		rpt.WithParallelThreshold(1<<30),
+		rpt.WithProbeMargin(1e9))
 	rnd := rand.New(rand.NewSource(3))
 	for i := 0; i < 500; i++ {
 		if err := idx.Add(i, makeVector(rnd, dim)); err != nil {
@@ -486,9 +492,13 @@ func TestRPTIndex_ConcurrentMultiProbeSearch(t *testing.T) {
 func TestRPTIndex_SeedReproducibility(t *testing.T) {
 	t.Setenv("HANN_SEED", "12345")
 	dim := 8
-	build := func() *rpt.RPTIndex {
-		idx := rpt.NewRPTIndex(dim, 5, 3, 1<<30, 0)
-		idx.AllowBruteForceFallback = false
+	build := func() *rpt.Index {
+		idx := mustNew(t, dim,
+			rpt.WithLeafCapacity(5),
+			rpt.WithCandidateProjections(3),
+			rpt.WithParallelThreshold(1<<30),
+			rpt.WithProbeMargin(0),
+			rpt.WithBruteForceFallback(false))
 		rnd := rand.New(rand.NewSource(7))
 		for i := 0; i < 400; i++ {
 			if err := idx.Add(i, makeVector(rnd, dim)); err != nil {
@@ -523,14 +533,17 @@ func TestRPTIndex_SeedReproducibility(t *testing.T) {
 	}
 }
 
-// TestRPTIndex_SaveLoadDistance checks that the configured distance name is
-// reported by Stats, survives a save and load round-trip, and that the
-// distance function is restored when loading into a zero-value index.
+// TestRPTIndex_SaveLoadDistance checks that the configured metric name is
+// reported by Stats, survives a save and load round-trip, and that the metric
+// is restored when loading into a zero-value index.
 func TestRPTIndex_SaveLoadDistance(t *testing.T) {
 	dim := 4
-	idx := rpt.NewRPTIndex(dim, 4, 2, 100, 0.1)
-	idx.Distance = core.Distances["manhattan"]
-	idx.DistanceName = "manhattan"
+	idx := mustNew(t, dim,
+		rpt.WithLeafCapacity(4),
+		rpt.WithCandidateProjections(2),
+		rpt.WithParallelThreshold(100),
+		rpt.WithProbeMargin(0.1),
+		rpt.WithMetric(core.Manhattan))
 	vectors := map[int][]float32{
 		1: {1, 2, 3, 4},
 		2: {4, 3, 2, 1},
@@ -549,7 +562,7 @@ func TestRPTIndex_SaveLoadDistance(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	loaded := &rpt.RPTIndex{}
+	loaded := &rpt.Index{}
 	if err := loaded.Load(bytes.NewReader(buf.Bytes())); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -568,17 +581,16 @@ func TestRPTIndex_SaveLoadDistance(t *testing.T) {
 	}
 }
 
-// rptFactory returns the testutil factory for the RPT index with the
-// conventional default parameters used across these tests.
-func rptFactory(dim int) testutil.Factory {
+// rptFactory returns the testutil factory for the RPT index with the default
+// parameters used across these tests.
+func rptFactory(t *testing.T, dim int) testutil.Factory {
 	return testutil.Factory{
 		New: func() core.Index {
-			return rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-				defaultParallelThreshold, defaultProbeMargin)
+			return mustNew(t, dim)
 		},
 		ExactDistances: true,
 		SortedResults:  true,
-		Distance:       core.Euclidean,
+		Metric:         core.Euclidean,
 	}
 }
 
@@ -593,8 +605,7 @@ func TestRPTIndex_Recall(t *testing.T) {
 	data := testutil.ClusteredData(42, 2000, dim, 16)
 	queries := testutil.Queries(43, data, 20)
 
-	idx := rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-		defaultParallelThreshold, defaultProbeMargin)
+	idx := mustNew(t, dim)
 	arg := make(map[int][]float32, len(data))
 	for id, vec := range data {
 		arg[id] = testutil.CopyVector(vec)
@@ -626,10 +637,9 @@ func TestRPTIndex_Recall(t *testing.T) {
 // brute-force model, checking counts, error paths, search membership, exact
 // distances, sorted results, and save and load round-trips.
 func TestRPTIndex_PropertyOps(t *testing.T) {
-	f := rptFactory(16)
 	for _, seed := range []int64{1, 2, 3, 4} {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
-			testutil.RunPropertyOps(t, f, 16, seed, 400)
+			testutil.RunPropertyOps(t, rptFactory(t, 16), 16, seed, 400)
 		})
 	}
 }
@@ -638,7 +648,7 @@ func TestRPTIndex_PropertyOps(t *testing.T) {
 // once. Run with the race detector; this test is the permanent guard for the
 // concurrency bugs the package had.
 func TestRPTIndex_ConcurrentStress(t *testing.T) {
-	testutil.RunConcurrentOps(t, rptFactory(16), 16, 8, 300)
+	testutil.RunConcurrentOps(t, rptFactory(t, 16), 16, 8, 300)
 }
 
 // goldenExpected is the JSON shape stored next to the golden gob fixture.
@@ -649,7 +659,7 @@ type goldenExpected struct {
 
 // goldenSearchIDs returns the result ids of Search on the fixed golden
 // queries.
-func goldenSearchIDs(t *testing.T, idx *rpt.RPTIndex, queries [][]float32, k int) [][]int {
+func goldenSearchIDs(t *testing.T, idx *rpt.Index, queries [][]float32, k int) [][]int {
 	t.Helper()
 	results := make([][]int, len(queries))
 	for i, query := range queries {
@@ -669,7 +679,9 @@ func goldenSearchIDs(t *testing.T, idx *rpt.RPTIndex, queries [][]float32, k int
 // TestRPTIndex_GoldenFile pins the gob on-disk format. The serialized form
 // holds only the points, not the tree, so the tree is rebuilt on the first
 // search after Load; that rebuild draws randomness, which is why both the
-// update path and the verify path run under a fixed HANN_SEED. Run with
+// update path and the verify path run under a fixed HANN_SEED. The loading
+// index is constructed with the Manhattan metric so the test also pins that
+// the metric name stored in the file overrides the configured one. Run with
 // -update to regenerate the fixture after an intentional format change; the
 // test never regenerates it implicitly.
 func TestRPTIndex_GoldenFile(t *testing.T) {
@@ -683,13 +695,12 @@ func TestRPTIndex_GoldenFile(t *testing.T) {
 	data := testutil.ClusteredData(7, 30, dim, 4)
 	queries := testutil.Queries(8, data, 3)
 
-	newIndex := func() *rpt.RPTIndex {
-		return rpt.NewRPTIndex(dim, defaultLeafCapacity, defaultCandidateProjections,
-			defaultParallelThreshold, defaultProbeMargin)
+	newIndex := func() *rpt.Index {
+		return mustNew(t, dim, rpt.WithMetric(core.Manhattan))
 	}
 
 	if *update {
-		idx := newIndex()
+		idx := mustNew(t, dim)
 		arg := make(map[int][]float32, len(data))
 		for id, vec := range data {
 			arg[id] = testutil.CopyVector(vec)
@@ -764,6 +775,11 @@ func TestRPTIndex_GoldenFile(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
+	// The fixture was written with the Euclidean metric, so the loaded index
+	// must report the name stored in the file, not the configured one.
+	if got := loaded.Stats().Distance; got != "euclidean" {
+		t.Errorf("Stats().Distance = %q after load, golden file expects %q", got, "euclidean")
+	}
 	if got := loaded.Stats().Count; got != expected.Count {
 		t.Errorf("Stats().Count = %d, golden file expects %d", got, expected.Count)
 	}
@@ -786,58 +802,51 @@ func TestRPTIndex_GoldenFile(t *testing.T) {
 // TestRPTIndex_ConstructorValidation checks that the constructor rejects
 // parameter values that would break the index.
 func TestRPTIndex_ConstructorValidation(t *testing.T) {
-	t.Run("non-positive leaf capacity", func(t *testing.T) {
-		defer func() {
-			if recover() == nil {
-				t.Error("expected panic for leafCapacity <= 0, but got none")
+	cases := []struct {
+		name string
+		dim  int
+		opts []rpt.Option
+	}{
+		{"non-positive dimension", 0, nil},
+		{"non-positive leaf capacity", 4, []rpt.Option{rpt.WithLeafCapacity(0)}},
+		{"non-positive candidate projections", 4, []rpt.Option{rpt.WithCandidateProjections(0)}},
+		{"non-positive parallel threshold", 4, []rpt.Option{rpt.WithParallelThreshold(0)}},
+		{"negative probe margin", 4, []rpt.Option{rpt.WithProbeMargin(-0.1)}},
+		{"zero metric", 4, []rpt.Option{rpt.WithMetric(core.Metric{})}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, err := rpt.New(tc.dim, tc.opts...)
+			if err == nil {
+				t.Errorf("expected error from New, but got none")
 			}
-		}()
-		rpt.NewRPTIndex(4, 0, 2, 100, 0.1)
-	})
-	t.Run("non-positive candidate projections", func(t *testing.T) {
-		defer func() {
-			if recover() == nil {
-				t.Error("expected panic for candidateProjections <= 0, but got none")
+			if idx != nil {
+				t.Errorf("expected nil index on error, got %v", idx)
 			}
-		}()
-		rpt.NewRPTIndex(4, 4, 0, 100, 0.1)
-	})
+		})
+	}
 }
 
 // TestRPTIndex_DifferentialExact compares complete searches against brute
 // force; with k equal to the index size the result must be the exact ranking.
 func TestRPTIndex_DifferentialExact(t *testing.T) {
-	factory := testutil.Factory{
-		New: func() core.Index {
-			return rpt.NewRPTIndex(16, defaultLeafCapacity, defaultCandidateProjections,
-				defaultParallelThreshold, defaultProbeMargin)
-		},
-		ExactDistances: true,
-		SortedResults:  true,
-		Distance:       core.Euclidean,
-	}
-	testutil.RunExactDifferential(t, factory, 16, 300, 10)
+	testutil.RunExactDifferential(t, rptFactory(t, 16), 16, 300, 10)
 }
 
 // TestRPTIndex_DifferentialBulkSequential compares an index built through Add
 // and Delete with one built through BulkAdd and BulkDelete.
 func TestRPTIndex_DifferentialBulkSequential(t *testing.T) {
-	factory := testutil.Factory{
-		New: func() core.Index {
-			return rpt.NewRPTIndex(16, defaultLeafCapacity, defaultCandidateProjections,
-				defaultParallelThreshold, defaultProbeMargin)
-		},
-		ExactDistances: true,
-		SortedResults:  true,
-		Distance:       core.Euclidean,
-	}
-	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
+	testutil.RunBulkSequentialDifferential(t, rptFactory(t, 16), 16, 300, 10)
 }
 
 // TestRPTIndex_FallbackSearchCounter checks that a search that falls back to
 // a brute-force scan is visible in Stats.
 func TestRPTIndex_FallbackSearchCounter(t *testing.T) {
-	idx := rpt.NewRPTIndex(4, 2, 2, 100, 0.0)
+	idx := mustNew(t, 4,
+		rpt.WithLeafCapacity(2),
+		rpt.WithCandidateProjections(2),
+		rpt.WithParallelThreshold(100),
+		rpt.WithProbeMargin(0.0))
 	for id := 0; id < 30; id++ {
 		vec := []float32{float32(id), float32(id + 1), float32(id + 2), float32(id + 3)}
 		if err := idx.Add(id, vec); err != nil {

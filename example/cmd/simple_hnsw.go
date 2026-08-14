@@ -8,7 +8,6 @@ import (
 	"log"
 	"os"
 
-	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/hnsw"
 )
 
@@ -21,10 +20,12 @@ func main() {
 	dim := 6
 	m := 5
 	ef := 10
-	distanceName := "euclidean"
 
 	// Create an HNSW index with the given parameters.
-	index := hnsw.NewHNSW(dim, m, ef, core.Distances[distanceName], distanceName)
+	index, err := hnsw.New(dim, hnsw.WithM(m), hnsw.WithEf(ef))
+	if err != nil {
+		log.Fatalf("Failed to create HNSW index: %v", err)
+	}
 	fmt.Println("Created new HNSW index.")
 
 	// Add a few vectors.
@@ -93,7 +94,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to open file: %v", err)
 	}
-	newIndex := hnsw.NewHNSW(dim, m, ef, core.Distances[distanceName], distanceName)
+	newIndex, err := hnsw.New(dim, hnsw.WithM(m), hnsw.WithEf(ef))
+	if err != nil {
+		log.Fatalf("Failed to create HNSW index: %v", err)
+	}
 	if err := newIndex.Load(loadFile); err != nil {
 		log.Fatalf("Load failed: %v", err)
 	}

@@ -88,7 +88,7 @@ func TestDistanceFunctions(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
-			euclid, err := Euclidean(tt.a, tt.b)
+			euclid, err := Euclidean.Distance(tt.a, tt.b)
 			if err != nil {
 				t.Errorf("Euclidean returned an unexpected error: %v", err)
 			}
@@ -96,7 +96,7 @@ func TestDistanceFunctions(t *testing.T) {
 				t.Errorf("Euclidean(%v, %v) = %v; want %v", tt.a, tt.b, euclid, tt.expectedEuclidean)
 			}
 
-			sqEuclid, err := SquaredEuclidean(tt.a, tt.b)
+			sqEuclid, err := SquaredEuclidean.Distance(tt.a, tt.b)
 			if err != nil {
 				t.Errorf("SquaredEuclidean returned an unexpected error: %v", err)
 			}
@@ -104,7 +104,7 @@ func TestDistanceFunctions(t *testing.T) {
 				t.Errorf("SquaredEuclidean(%v, %v) = %v; want %v", tt.a, tt.b, sqEuclid, tt.expectedSquaredEuclidean)
 			}
 
-			manhattan, err := Manhattan(tt.a, tt.b)
+			manhattan, err := Manhattan.Distance(tt.a, tt.b)
 			if err != nil {
 				t.Errorf("Manhattan returned an unexpected error: %v", err)
 			}
@@ -112,7 +112,7 @@ func TestDistanceFunctions(t *testing.T) {
 				t.Errorf("Manhattan(%v, %v) = %v; want %v", tt.a, tt.b, manhattan, tt.expectedManhattan)
 			}
 
-			cosine, err := CosineDistance(tt.a, tt.b)
+			cosine, err := Cosine.Distance(tt.a, tt.b)
 			if err != nil {
 				t.Errorf("CosineDistance returned an unexpected error: %v", err)
 			}
@@ -129,18 +129,18 @@ func TestDistanceFunctionsErrors(t *testing.T) {
 		a, b []float32
 		fn   func(a, b []float32) (float64, error)
 	}{
-		{"Euclidean different length", []float32{1}, []float32{1, 2}, Euclidean},
-		{"SquaredEuclidean different length", []float32{1}, []float32{1, 2}, SquaredEuclidean},
-		{"Manhattan different length", []float32{1}, []float32{1, 2}, Manhattan},
-		{"CosineDistance different length", []float32{1}, []float32{1, 2}, CosineDistance},
-		{"Euclidean empty a", []float32{}, []float32{1, 2}, Euclidean},
-		{"SquaredEuclidean empty a", []float32{}, []float32{1, 2}, SquaredEuclidean},
-		{"Manhattan empty a", []float32{}, []float32{1, 2}, Manhattan},
-		{"CosineDistance empty a", []float32{}, []float32{1, 2}, CosineDistance},
-		{"Euclidean empty b", []float32{1, 2}, []float32{}, Euclidean},
-		{"SquaredEuclidean empty b", []float32{1, 2}, []float32{}, SquaredEuclidean},
-		{"Manhattan empty b", []float32{1, 2}, []float32{}, Manhattan},
-		{"CosineDistance empty b", []float32{1, 2}, []float32{}, CosineDistance},
+		{"Euclidean different length", []float32{1}, []float32{1, 2}, Euclidean.Distance},
+		{"SquaredEuclidean different length", []float32{1}, []float32{1, 2}, SquaredEuclidean.Distance},
+		{"Manhattan different length", []float32{1}, []float32{1, 2}, Manhattan.Distance},
+		{"CosineDistance different length", []float32{1}, []float32{1, 2}, Cosine.Distance},
+		{"Euclidean empty a", []float32{}, []float32{1, 2}, Euclidean.Distance},
+		{"SquaredEuclidean empty a", []float32{}, []float32{1, 2}, SquaredEuclidean.Distance},
+		{"Manhattan empty a", []float32{}, []float32{1, 2}, Manhattan.Distance},
+		{"CosineDistance empty a", []float32{}, []float32{1, 2}, Cosine.Distance},
+		{"Euclidean empty b", []float32{1, 2}, []float32{}, Euclidean.Distance},
+		{"SquaredEuclidean empty b", []float32{1, 2}, []float32{}, SquaredEuclidean.Distance},
+		{"Manhattan empty b", []float32{1, 2}, []float32{}, Manhattan.Distance},
+		{"CosineDistance empty b", []float32{1, 2}, []float32{}, Cosine.Distance},
 	}
 
 	for _, tt := range tests {
@@ -202,7 +202,8 @@ func referenceDistance(name string, a, b []float32) float64 {
 func TestDistanceDifferentialAgainstReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	dims := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 17, 25, 31, 32, 33, 128, 200, 784}
-	for name, fn := range Distances {
+	for _, m := range []Metric{Euclidean, SquaredEuclidean, Manhattan, Cosine} {
+		name, fn := m.Name(), m.Func()
 		for _, dim := range dims {
 			for trial := 0; trial < 5; trial++ {
 				a := make([]float32, dim)
@@ -227,7 +228,7 @@ func TestDistanceDifferentialAgainstReference(t *testing.T) {
 	// The zero-vector operand is the documented cosine edge case.
 	zero := make([]float32, 8)
 	other := []float32{1, 2, 3, 4, 5, 6, 7, 8}
-	got, err := CosineDistance(zero, other)
+	got, err := Cosine.Distance(zero, other)
 	if err != nil {
 		t.Fatalf("cosine with zero vector: unexpected error: %v", err)
 	}

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/habedi/hann/core"
-	"github.com/habedi/hann/pqivf"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -48,15 +47,15 @@ func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxRe
 		log.Fatalf("Failed to load training vectors: %v", err)
 	}
 	log.Printf("Loaded %d training vectors", len(trainingVectors))
-	if err := index.BulkAdd(trainingVectors); err != nil {
+	if err := core.BulkAdd(index, trainingVectors); err != nil {
 		log.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	// If the index is a PQIVF index, it needs to be trained.
-	if pqIndex, ok := index.(*pqivf.PQIVFIndex); ok {
-		log.Println("Training PQIVF index...")
-		if err := pqIndex.Train(); err != nil {
-			log.Fatalf("PQIVF training failed: %v", err)
+	// If the index requires a training step, run it before searching.
+	if trainer, ok := index.(core.Trainer); ok {
+		log.Println("Training index...")
+		if err := trainer.Train(); err != nil {
+			log.Fatalf("Index training failed: %v", err)
 		}
 	}
 

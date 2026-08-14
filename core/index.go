@@ -1,62 +1,117 @@
 package core
 
-import "io"
+import (
+	"io"
+	"sort"
+)
 
-// Index represents a generic interface for an approximate nearest neighbors search index.
-// All indexes in Hann must implement the functions defined in this interface.
+// Index is the interface every index in Hann implements. Implementations
+// must be safe for concurrent use: any method may be called from multiple
+// goroutines at once.
 type Index interface {
 
 	// Add inserts a vector with a given id into the index.
-	// id: the identifier for the vector.
-	// vector: the vector to be added.
-	// Returns an error if the operation fails.
+	// It returns an error when the id already exists or the vector has the
+	// wrong dimension.
 	Add(id int, vector []float32) error
 
-	// BulkAdd inserts multiple vectors into the index.
-	// vectors: a map where the key is the vector id and the value is the vector.
-	// Returns an error if the operation fails.
-	BulkAdd(vectors map[int][]float32) error
-
 	// Delete removes the vector with the given id from the index.
-	// id: the identifier for the vector to be removed.
-	// Returns an error if the operation fails.
+	// It returns an error when the id does not exist.
 	Delete(id int) error
 
-	// BulkDelete removes multiple vectors from the index.
-	// ids: a slice of vector ids to be removed.
-	// Returns an error if the operation fails.
-	BulkDelete(ids []int) error
-
-	// Update modifies the vector associated with the given id.
-	// id: the identifier for the vector to be updated.
-	// vector: the new vector.
-	// Returns an error if the operation fails.
+	// Update replaces the vector associated with the given id atomically.
+	// It returns an error when the id does not exist or the vector has the
+	// wrong dimension, and a failed update leaves the index unchanged.
 	Update(id int, vector []float32) error
 
-	// BulkUpdate updates multiple vectors in the index.
-	// updates: a map where the key is the vector id and the value is the new vector.
-	// Returns an error if the operation fails.
-	BulkUpdate(updates map[int][]float32) error
-
-	// Search returns the ids and distances of the k nearest neighbors for a query vector.
-	// query: the vector to search for.
-	// k: the number of nearest neighbors to return.
-	// Returns a slice of Neighbor structs and an error if the operation fails.
+	// Search returns the ids and distances of the k nearest neighbors for a
+	// query vector, in non-decreasing distance order.
 	Search(query []float32, k int) ([]Neighbor, error)
 
-	// Stats returns metadata about the index, such as count and dimensionality.
-	// Returns an IndexStats struct containing the metadata.
+	// Stats returns metadata about the index, such as count and dimension.
 	Stats() IndexStats
 
-	// Save persists the index state to the specified file.
-	// w: the writer to which the index state will be saved.
-	// Returns an error if the operation fails.
+	// Save persists the index state to the given writer.
 	Save(w io.Writer) error
 
 	// Load initializes the index from a previously saved state.
-	// r: the reader from which the index state will be loaded.
-	// Returns an error if the operation fails.
 	Load(r io.Reader) error
+}
+
+// BulkIndex is implemented by indexes that apply batches under a single
+// critical section. The batched methods behave like their single-item
+// counterparts applied to every element.
+type BulkIndex interface {
+	Index
+
+	// BulkAdd inserts multiple vectors into the index.
+	BulkAdd(vectors map[int][]float32) error
+
+	// BulkDelete removes multiple vectors from the index.
+	BulkDelete(ids []int) error
+
+	// BulkUpdate replaces multiple vectors in the index.
+	BulkUpdate(updates map[int][]float32) error
+}
+
+// Trainer is implemented by indexes that require a training step before they
+// can be searched, such as the PQIVF index.
+type Trainer interface {
+	// Train builds the quantization state from the stored vectors.
+	Train() error
+}
+
+// BulkAdd inserts multiple vectors, using the index's batched fast path when
+// it has one and falling back to per-item calls in ascending id order.
+func BulkAdd(idx Index, vectors map[int][]float32) error {
+	if bulk, ok := idx.(BulkIndex); ok {
+		return bulk.BulkAdd(vectors)
+	}
+	for _, id := range sortedKeys(vectors) {
+		if err := idx.Add(id, vectors[id]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// BulkDelete removes multiple vectors, using the index's batched fast path
+// when it has one and falling back to per-item calls.
+func BulkDelete(idx Index, ids []int) error {
+	if bulk, ok := idx.(BulkIndex); ok {
+		return bulk.BulkDelete(ids)
+	}
+	for _, id := range ids {
+		if err := idx.Delete(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// BulkUpdate replaces multiple vectors, using the index's batched fast path
+// when it has one and falling back to per-item calls in ascending id order.
+func BulkUpdate(idx Index, updates map[int][]float32) error {
+	if bulk, ok := idx.(BulkIndex); ok {
+		return bulk.BulkUpdate(updates)
+	}
+	for _, id := range sortedKeys(updates) {
+		if err := idx.Update(id, updates[id]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sortedKeys returns the map's keys in ascending order, so the fallback loops
+// apply batches deterministically.
+func sortedKeys(m map[int][]float32) []int {
+	keys := make([]int, 0, len(m))
+	for id := range m {
+		keys = append(keys, id)
+	}
+	sort.Ints(keys)
+	return keys
 }
 
 // Neighbor holds a neighbor's id and its computed distance.
@@ -69,7 +124,7 @@ type Neighbor struct {
 type IndexStats struct {
 	Count     int    // total number of indexed vectors.
 	Dimension int    // dimensionality of vectors.
-	Distance  string // name of the distance function used by the index.
+	Distance  string // name of the metric used by the index.
 
 	// FallbackSearches is the number of searches so far that fell back to a
 	// brute-force scan because the index structure yielded too few candidates.

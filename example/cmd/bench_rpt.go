@@ -31,12 +31,11 @@ func main() {
 func BenchRPTIndexFashionMNIST() {
 	factory := func() core.Index {
 		dimension := 784
-		leafCapacity := 10
-		candidateProjections := 3
-		parallelThreshold := 100
-		probeMargin := 0.15
-		return rpt.NewRPTIndex(dimension, leafCapacity, candidateProjections, parallelThreshold,
-			probeMargin)
+		index, err := rpt.New(dimension)
+		if err != nil {
+			log.Fatalf("Failed to create RPT index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "fashion-mnist-784-euclidean",
@@ -46,12 +45,11 @@ func BenchRPTIndexFashionMNIST() {
 func BenchRPTIndexSIFT() {
 	factory := func() core.Index {
 		dimension := 128
-		leafCapacity := 10
-		candidateProjections := 3
-		parallelThreshold := 100
-		probeMargin := 0.15
-		return rpt.NewRPTIndex(dimension, leafCapacity, candidateProjections, parallelThreshold,
-			probeMargin)
+		index, err := rpt.New(dimension)
+		if err != nil {
+			log.Fatalf("Failed to create RPT index: %v", err)
+		}
+		return index
 	}
 
 	example.RunDataset(factory, "sift-128-euclidean",

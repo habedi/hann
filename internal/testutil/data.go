@@ -61,16 +61,16 @@ func Queries(seed int64, data map[int][]float32, q int) [][]float32 {
 }
 
 // BruteForceKNN returns the ids of the k nearest data points to the query
-// under the given distance, breaking distance ties by id, so the result is
+// under the given metric, breaking distance ties by id, so the result is
 // deterministic.
-func BruteForceKNN(query []float32, data map[int][]float32, k int, dist core.DistanceFunc) ([]int, error) {
+func BruteForceKNN(query []float32, data map[int][]float32, k int, metric core.Metric) ([]int, error) {
 	type scored struct {
 		id   int
 		dist float64
 	}
 	all := make([]scored, 0, len(data))
 	for id, vec := range data {
-		d, err := dist(query, vec)
+		d, err := metric.Distance(query, vec)
 		if err != nil {
 			return nil, err
 		}
