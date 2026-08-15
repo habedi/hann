@@ -1,17 +1,19 @@
 package rpt_test
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/habedi/hann/core"
 	"github.com/habedi/hann/internal/testutil"
+	"github.com/habedi/hann/rpt"
 )
 
 // TestRPTIndex_Recall measures recall on clustered synthetic data against a
 // brute-force ground truth. With HANN_SEED fixed the tree build is
 // reproducible, so the measured recall is stable across runs. Observed recall
-// over repeated runs was 1.00 for every query batch; the threshold of 0.90
-// leaves a margin well above 0.05 for platform differences in the SIMD path.
+// with the default parameters was 0.93; the threshold of 0.90 leaves room
+// for platform differences in the SIMD path.
 func TestRPTIndex_Recall(t *testing.T) {
 	t.Setenv("HANN_SEED", "42")
 	dim, k := 16, 10
@@ -43,6 +45,48 @@ func TestRPTIndex_Recall(t *testing.T) {
 	t.Logf("mean recall over %d queries at k=%d: %.4f", len(queries), k, recall)
 	if recall < 0.90 {
 		t.Errorf("mean recall %.4f is below the threshold 0.90", recall)
+	}
+}
+
+// TestRPTIndex_TreeSelfConsistency checks that a query equal to a stored
+// vector is routed to the leaf that holds it. A tree whose split thresholds
+// disagree with the assignment of points to children fails this even though
+// the projection of the query is identical to the projection of the stored
+// point. The leaf capacity is set above k and the brute-force fallback is
+// disabled, so the answer must come from the tree.
+func TestRPTIndex_TreeSelfConsistency(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim, n := 64, 2000
+	rng := rand.New(rand.NewSource(7))
+	data := make(map[int][]float32, n)
+	for id := 0; id < n; id++ {
+		vec := make([]float32, dim)
+		for i := range vec {
+			vec[i] = float32(rng.NormFloat64())
+		}
+		data[id] = vec
+	}
+
+	idx := mustNew(t, dim, rpt.WithLeafCapacity(32), rpt.WithBruteForceFallback(false))
+	if err := idx.BulkAdd(data); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+
+	misses := 0
+	for id := 0; id < 100; id++ {
+		got, err := idx.Search(testutil.CopyVector(data[id]), 1)
+		if err != nil {
+			t.Fatalf("Search for id %d failed: %v", id, err)
+		}
+		if len(got) == 0 || got[0].ID != id {
+			misses++
+		}
+	}
+	if misses > 0 {
+		t.Errorf("%d of 100 self queries did not return the queried id", misses)
+	}
+	if fallbacks := idx.Stats().FallbackSearches; fallbacks != 0 {
+		t.Errorf("expected no fallback searches, got %d", fallbacks)
 	}
 }
 
