@@ -38,6 +38,9 @@
               pprof
               graphviz
 
+              # Cross-compiling the cgo code (zig cc is a hermetic C cross-toolchain)
+              zig
+
               # Git hooks, and the dataset download script
               pre-commit
               uv

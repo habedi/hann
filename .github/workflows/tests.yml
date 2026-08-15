@@ -70,6 +70,35 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
         continue-on-error: false
 
+  cross-compile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+
+      # Zig provides a hermetic C cross-toolchain, so the cgo code is verified
+      # to cross-compile for linux/arm64 without an installed cross gcc.
+      - name: Cross-compile for linux/arm64
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: arm64
+        run: |
+          export CC="zig cc -target aarch64-linux-gnu"
+          go build ./...
+          go test -c -o /dev/null ./core/
+
   tests-other-os:
     runs-on: ${{ matrix.os }}
 
