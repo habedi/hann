@@ -20,7 +20,7 @@ const (
 	defaultLeafCapacity         = 10
 	defaultCandidateProjections = 3
 	defaultParallelThreshold    = 100
-	defaultProbeMargin          = 0.15
+	defaultProbeMargin          = 1.0
 )
 
 // rebuildFloor is the minimum number of overlay entries (pending adds plus
@@ -49,7 +49,8 @@ func WithParallelThreshold(parallelThreshold int) Option {
 }
 
 // WithProbeMargin sets the margin within which a search probes both children
-// of a tree node.
+// of a tree node, expressed as a fraction of the interquartile range of the
+// projection values the node saw at build time.
 func WithProbeMargin(probeMargin float64) Option {
 	return func(r *Index) { r.probeMargin = probeMargin }
 }
@@ -68,7 +69,7 @@ func WithMetric(metric core.Metric) Option {
 // New creates an RPT (Random Projection Tree) index for vectors of the given
 // dimension. Tuning parameters are set through options; the defaults are a
 // leaf capacity of 10, 3 candidate projections, a parallel threshold of 100,
-// a probe margin of 0.15, brute-force fallback enabled, and the Euclidean
+// a probe margin of 1.0, brute-force fallback enabled, and the Euclidean
 // metric. It returns an error when the dimension, an option value, or the
 // metric is invalid.
 func New(dimension int, opts ...Option) (*Index, error) {
@@ -118,6 +119,7 @@ type treeNode struct {
 	points     []int     // ids of points in the leaf
 	projection []float32 // projection vector used for splitting at this node
 	threshold  float64   // split threshold (median value)
+	spread     float64   // interquartile range of the projection values at build time
 	left       *treeNode // left child node
 	right      *treeNode // right child node
 }
@@ -166,6 +168,7 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 	type candidate struct {
 		proj      []float32 // random projection vector
 		threshold float64   // median threshold along projection
+		spread    float64   // interquartile range of the projection values
 		leftIDs   []int     // point ids going to left child
 		rightIDs  []int     // point ids going to right child
 		imbalance int       // difference in count between left and right sets
@@ -211,6 +214,9 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 		})
 		// Choose the median as threshold.
 		mid := len(pairs) / 2
+		// The interquartile range of the projection values gives the probe
+		// margin a scale to work against at query time.
+		spread := pairs[(3*len(pairs))/4].dot - pairs[len(pairs)/4].dot
 
 		// Choose a random point x and compute the maximum distance to any other point.
 		x := points[ids[rnd.Intn(len(ids))]]
@@ -243,7 +249,24 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 				rightIDs = append(rightIDs, p.id)
 			}
 		}
-		// Fallback: if one side is empty, split evenly.
+		// Fallback: the jitter pushed the threshold outside the range of the
+		// projection values and left one side empty. Split at the median
+		// value instead, so the threshold stored in the node still routes a
+		// query to the child that holds its neighbors.
+		if len(leftIDs) == 0 || len(rightIDs) == 0 {
+			threshold = pairs[mid].dot
+			leftIDs, rightIDs = nil, nil
+			for _, p := range pairs {
+				if p.dot < threshold {
+					leftIDs = append(leftIDs, p.id)
+				} else {
+					rightIDs = append(rightIDs, p.id)
+				}
+			}
+		}
+		// Last resort: every projection value is equal, so no threshold on
+		// this projection separates the points. Split evenly by position;
+		// routing is arbitrary among points with identical projections.
 		if len(leftIDs) == 0 || len(rightIDs) == 0 {
 			mid = len(ids) / 2
 			leftIDs = make([]int, mid)
@@ -255,6 +278,7 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 		cand := candidate{
 			proj:      proj,
 			threshold: threshold,
+			spread:    spread,
 			leftIDs:   leftIDs,
 			rightIDs:  rightIDs,
 			imbalance: imbalance,
@@ -300,6 +324,7 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 		isLeaf:     false,
 		projection: bestCandidate.proj,
 		threshold:  bestCandidate.threshold,
+		spread:     bestCandidate.spread,
 		left:       leftChild,
 		right:      rightChild,
 	}
@@ -358,8 +383,10 @@ func searchTreeMultiProbeWithMargin(node *treeNode, query []float32, dimension i
 	for i := 0; i < dimension; i++ {
 		dot += float64(query[i]) * float64(node.projection[i])
 	}
-	// If close to threshold, probe both children.
-	if math.Abs(dot-node.threshold) < margin {
+	// If close to threshold, probe both children. The margin is a fraction
+	// of the interquartile range of the projection values seen at build
+	// time, so its effect does not depend on the scale of the data.
+	if math.Abs(dot-node.threshold) < margin*node.spread {
 		leftIDs := searchTreeMultiProbeWithMargin(node.left, query, dimension, margin)
 		rightIDs := searchTreeMultiProbeWithMargin(node.right, query, dimension, margin)
 		// Merge into a fresh slice; appending to leftIDs could write into the

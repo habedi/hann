@@ -172,8 +172,9 @@ The index has the following configurable parameters:
   quality at the cost of increased indexing time (typical range: 1–10).
 - **parallelThreshold**: Minimum number of vectors in a subtree to trigger parallel construction. Higher values lead to
   better concurrency during indexing but use more memory (typical value: 100).
-- **probeMargin**: Margin used to determine additional branches probed during searches. Higher values improve recall but
-  increase search overhead because of additional distance computations (typical range: 0.1–0.5).
+- **probeMargin**: Margin used to determine additional branches probed during searches, as a fraction of the spread of
+  the projection values at each node. Higher values improve recall but increase search overhead because of additional
+  distance computations (typical range: 0.25–2.0).
 
 An index is created with `rpt.New(dimension, ...)`, and the parameters are set with the `rpt.WithLeafCapacity`,
 `rpt.WithCandidateProjections`, `rpt.WithParallelThreshold`, `rpt.WithProbeMargin`, and `rpt.WithMetric` options.
