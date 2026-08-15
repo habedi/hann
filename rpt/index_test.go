@@ -722,3 +722,137 @@ func TestRPTIndex_GobDecodeErrors(t *testing.T) {
 		t.Errorf("expected an unknown metric error, got %v", err)
 	}
 }
+
+// TestRPTIndex_UpdatedVectorReachableAtNewPosition checks that a point moved
+// by Update or BulkUpdate is found by a query at its new position before any
+// tree rebuild. The probe margin is zero and k is small, so the tree alone
+// must produce the point; the brute-force fallback must stay unused.
+func TestRPTIndex_UpdatedVectorReachableAtNewPosition(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim := 16
+	idx := mustNew(t, dim, rpt.WithLeafCapacity(16), rpt.WithProbeMargin(0))
+	rng := rand.New(rand.NewSource(1))
+	pts := make(map[int][]float32, 1000)
+	for id := 0; id < 1000; id++ {
+		vec := make([]float32, dim)
+		for i := range vec {
+			vec[i] = float32(rng.NormFloat64())
+		}
+		pts[id] = vec
+	}
+	if err := idx.BulkAdd(pts); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+
+	farA := make([]float32, dim)
+	farB := make([]float32, dim)
+	for i := range farA {
+		farA[i] = 100
+		farB[i] = -100
+	}
+	if err := idx.Update(7, farA); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if err := idx.BulkUpdate(map[int][]float32{8: farB}); err != nil {
+		t.Fatalf("BulkUpdate failed: %v", err)
+	}
+
+	got, err := idx.Search(testutil.CopyVector(farA), 1)
+	if err != nil {
+		t.Fatalf("Search at the Update position failed: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 7 {
+		t.Errorf("query at the updated position: got %v, want id 7", got)
+	}
+	got, err = idx.Search(testutil.CopyVector(farB), 1)
+	if err != nil {
+		t.Fatalf("Search at the BulkUpdate position failed: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 8 {
+		t.Errorf("query at the bulk-updated position: got %v, want id 8", got)
+	}
+	if fb := idx.Stats().FallbackSearches; fb != 0 {
+		t.Errorf("expected no fallback searches, got %d", fb)
+	}
+}
+
+// TestRPTIndex_BulkUpdateInvalidLeavesIndexUnchanged checks that a batch with
+// one unknown id changes nothing: every valid entry must stay at its old
+// position. The check runs on many fresh indexes, because a partial
+// application depends on map iteration order.
+func TestRPTIndex_BulkUpdateInvalidLeavesIndexUnchanged(t *testing.T) {
+	dim := 8
+	for round := 0; round < 20; round++ {
+		idx := mustNew(t, dim)
+		for id := 0; id < 10; id++ {
+			vec := make([]float32, dim)
+			vec[id%dim] = float32(10 * (id + 1))
+			if err := idx.Add(id, vec); err != nil {
+				t.Fatalf("Add(%d) failed: %v", id, err)
+			}
+		}
+		updates := make(map[int][]float32, 11)
+		for id := 0; id < 10; id++ {
+			moved := make([]float32, dim)
+			moved[(id+1)%dim] = float32(-10 * (id + 1))
+			updates[id] = moved
+		}
+		updates[99] = make([]float32, dim) // unknown id
+		if err := idx.BulkUpdate(updates); err == nil {
+			t.Fatal("expected error from BulkUpdate with an unknown id, got none")
+		}
+		for id := 0; id < 10; id++ {
+			orig := make([]float32, dim)
+			orig[id%dim] = float32(10 * (id + 1))
+			got, err := idx.Search(orig, 1)
+			if err != nil {
+				t.Fatalf("round %d: Search failed: %v", round, err)
+			}
+			if len(got) != 1 || got[0].ID != id || got[0].Distance > 1e-6 {
+				t.Fatalf("round %d: id %d moved despite the failed BulkUpdate: %v", round, id, got)
+			}
+		}
+	}
+}
+
+// TestRPTIndex_GobDecodeSanitizesParameters loads a file whose tuning
+// parameters are out of range, as a corrupt or crafted file's would be. The
+// decode must fall back to the defaults instead of panicking or hanging in
+// the Load-time tree build.
+func TestRPTIndex_GobDecodeSanitizesParameters(t *testing.T) {
+	payload := struct {
+		Dimension            int
+		Points               map[int][]float32
+		DistanceName         string
+		LeafCapacity         int
+		CandidateProjections int
+		ParallelThreshold    int
+		ProbeMargin          float64
+	}{
+		Dimension:            4,
+		Points:               map[int][]float32{1: {1, 0, 0, 0}, 2: {0, 1, 0, 0}},
+		DistanceName:         "euclidean",
+		LeafCapacity:         0,
+		CandidateProjections: 0,
+		ParallelThreshold:    0,
+		ProbeMargin:          -1,
+	}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(payload); err != nil {
+		t.Fatalf("encoding the payload failed: %v", err)
+	}
+	var idx rpt.Index
+	if err := idx.GobDecode(buf.Bytes()); err != nil {
+		t.Fatalf("GobDecode failed: %v", err)
+	}
+	got, err := idx.Search([]float32{1, 0, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("Search after decode failed: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Errorf("expected id 1, got %v", got)
+	}
+	if err := idx.Add(3, []float32{0, 0, 1, 0}); err != nil {
+		t.Errorf("Add after decode failed: %v", err)
+	}
+}

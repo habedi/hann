@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/habedi/hann/core"
@@ -1129,5 +1131,305 @@ func TestHNSWIndex_SetEf(t *testing.T) {
 	}
 	if _, err := index.Search([]float32{1, 2, 3, 4}, 1); err != nil {
 		t.Fatalf("Search failed: %v", err)
+	}
+}
+
+// newCountdownMetric returns a metric that works like the Euclidean
+// distance until the countdown reaches zero, after which every call fails.
+// A countdown below zero never fails. The counter is atomic, because the
+// fallback scan calls the metric from several goroutines.
+func newCountdownMetric() (core.Metric, *atomic.Int64) {
+	countdown := new(atomic.Int64)
+	countdown.Store(-1)
+	metric := core.NewMetric("countdown_test_metric", func(a, b []float32) (float64, error) {
+		c := countdown.Load()
+		if c == 0 {
+			return 0, fmt.Errorf("distance failure injected by the test")
+		}
+		if c > 0 {
+			countdown.Add(-1)
+		}
+		return core.Euclidean.Distance(a, b)
+	}, false)
+	return metric, countdown
+}
+
+// newCountdownIndex returns an index of n random vectors built with the
+// countdown metric, together with the metric and its counter. Loading the
+// returned snapshot bytes into an index configured with the same metric
+// restores the same graph, because the metric's name is not registered and
+// the decode keeps the configured metric.
+func newCountdownIndex(t *testing.T, dim, n int) (*hnsw.Index, core.Metric, *atomic.Int64) {
+	t.Helper()
+	metric, countdown := newCountdownMetric()
+	idx := newTestIndex(t, dim,
+		hnsw.WithM(4), hnsw.WithEf(30), hnsw.WithEfConstruction(20), hnsw.WithMetric(metric))
+	rng := rand.New(rand.NewSource(11))
+	for id := 0; id < n; id++ {
+		vec := make([]float32, dim)
+		for i := range vec {
+			vec[i] = float32(rng.NormFloat64())
+		}
+		if err := idx.Add(id, vec); err != nil {
+			t.Fatalf("Add(%d) failed: %v", id, err)
+		}
+	}
+	return idx, metric, countdown
+}
+
+// saveBytes serializes the index, so a test can restore the same graph many
+// times without rebuilding it.
+func saveBytes(t *testing.T, idx *hnsw.Index) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := idx.Save(&buf); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// allIDs runs a complete search and returns the ids it finds.
+func allIDs(t *testing.T, idx *hnsw.Index, query []float32) map[int]bool {
+	t.Helper()
+	count := idx.Stats().Count
+	neighbors, err := idx.Search(query, count)
+	if err != nil {
+		t.Fatalf("complete Search failed: %v", err)
+	}
+	ids := make(map[int]bool, len(neighbors))
+	for _, nb := range neighbors {
+		ids[nb.ID] = true
+	}
+	return ids
+}
+
+// TestHNSWIndex_FailedAddLeavesNoTrace injects a metric failure at every
+// possible point of an insertion. After each failed Add, the id must be
+// fully gone: the count unchanged, no search may return it, and the id must
+// be free for a later insert. The sweep stops at the first countdown that no
+// longer fails, which means every failure point was covered.
+func TestHNSWIndex_FailedAddLeavesNoTrace(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim, n := 8, 30
+	base, metric, countdown := newCountdownIndex(t, dim, n)
+	snapshot := saveBytes(t, base)
+	ghost := make([]float32, dim)
+	for i := range ghost {
+		ghost[i] = 50
+	}
+	completed := false
+	for cd := int64(1); cd <= 5000; cd++ {
+		idx := newTestIndex(t, dim, hnsw.WithMetric(metric))
+		if err := idx.Load(bytes.NewReader(snapshot)); err != nil {
+			t.Fatalf("Load failed: %v", err)
+		}
+		countdown.Store(cd)
+		errAdd := idx.Add(999, ghost)
+		countdown.Store(-1)
+		if errAdd == nil {
+			completed = true
+			break
+		}
+		if got := idx.Stats().Count; got != n {
+			t.Fatalf("countdown %d: count %d after the failed Add, want %d", cd, got, n)
+		}
+		if allIDs(t, idx, ghost)[999] {
+			t.Fatalf("countdown %d: a search returned the rolled-back id 999", cd)
+		}
+		if err := idx.Add(999, ghost); err != nil {
+			t.Fatalf("countdown %d: re-adding id 999 after the rollback failed: %v", cd, err)
+		}
+		got, err := idx.Search(ghost, 1)
+		if err != nil {
+			t.Fatalf("countdown %d: Search after the re-add failed: %v", cd, err)
+		}
+		if len(got) != 1 || got[0].ID != 999 {
+			t.Fatalf("countdown %d: expected id 999 after the re-add, got %v", cd, got)
+		}
+	}
+	if !completed {
+		t.Fatal("the sweep never reached a successful Add; raise the countdown limit")
+	}
+}
+
+// TestHNSWIndex_FailedUpdateLeavesIndexUnchanged injects a metric failure at
+// every possible point of an update. The core.Index contract says a failed
+// update leaves the index unchanged, so after each failure the stored vector
+// must be the old one, and a complete search must return the same ids and
+// distances as before the attempt.
+func TestHNSWIndex_FailedUpdateLeavesIndexUnchanged(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim, n := 8, 30
+	base, metric, countdown := newCountdownIndex(t, dim, n)
+	snapshot := saveBytes(t, base)
+	moved := make([]float32, dim)
+	for i := range moved {
+		moved[i] = 50
+	}
+	fixedQuery := make([]float32, dim)
+	fixedQuery[0] = 1
+	completed := false
+	for cd := int64(1); cd <= 5000; cd++ {
+		idx := newTestIndex(t, dim, hnsw.WithMetric(metric))
+		if err := idx.Load(bytes.NewReader(snapshot)); err != nil {
+			t.Fatalf("Load failed: %v", err)
+		}
+		before, err := idx.Search(fixedQuery, n)
+		if err != nil {
+			t.Fatalf("countdown %d: baseline Search failed: %v", cd, err)
+		}
+		origTop, err := idx.Search(moved, 1)
+		if err != nil {
+			t.Fatalf("countdown %d: pre-update Search failed: %v", cd, err)
+		}
+		countdown.Store(cd)
+		errUpdate := idx.Update(5, moved)
+		countdown.Store(-1)
+		if errUpdate == nil {
+			completed = true
+			break
+		}
+		after, err := idx.Search(fixedQuery, n)
+		if err != nil {
+			t.Fatalf("countdown %d: post-failure Search failed: %v", cd, err)
+		}
+		if len(after) != len(before) {
+			t.Fatalf("countdown %d: result size changed from %d to %d", cd, len(before), len(after))
+		}
+		for i := range before {
+			if before[i].ID != after[i].ID || before[i].Distance != after[i].Distance {
+				t.Fatalf("countdown %d: rank %d changed from %v to %v after the failed update",
+					cd, i, before[i], after[i])
+			}
+		}
+		movedTop, err := idx.Search(moved, 1)
+		if err != nil {
+			t.Fatalf("countdown %d: Search at the new position failed: %v", cd, err)
+		}
+		if len(movedTop) != 1 || movedTop[0].ID != origTop[0].ID {
+			t.Fatalf("countdown %d: id 5 moved despite the failed update: %v", cd, movedTop)
+		}
+	}
+	if !completed {
+		t.Fatal("the sweep never reached a successful Update; raise the countdown limit")
+	}
+}
+
+// TestHNSWIndex_FailedBulkAddRollsBackFailedNode injects a metric failure at
+// every possible point of a three-vector BulkAdd. Every batch id must
+// afterward be either fully present (Delete succeeds) or fully absent (no
+// search returns it). A ghost fails both.
+func TestHNSWIndex_FailedBulkAddRollsBackFailedNode(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim, n := 8, 30
+	base, metric, countdown := newCountdownIndex(t, dim, n)
+	snapshot := saveBytes(t, base)
+	batch := make(map[int][]float32, 3)
+	for j := 0; j < 3; j++ {
+		vec := make([]float32, dim)
+		vec[j] = 50
+		batch[900+j] = vec
+	}
+	completed := false
+	for cd := int64(1); cd <= 8000; cd++ {
+		idx := newTestIndex(t, dim, hnsw.WithMetric(metric))
+		if err := idx.Load(bytes.NewReader(snapshot)); err != nil {
+			t.Fatalf("Load failed: %v", err)
+		}
+		countdown.Store(cd)
+		errBulk := idx.BulkAdd(batch)
+		countdown.Store(-1)
+		if errBulk == nil {
+			completed = true
+			break
+		}
+		for id, vec := range batch {
+			top, err := idx.Search(vec, 1)
+			if err != nil {
+				t.Fatalf("countdown %d: Search at the batch vector failed: %v", cd, err)
+			}
+			delErr := idx.Delete(id)
+			if delErr == nil {
+				// The id was present, so it must also have been reachable:
+				// a present node that no search can return is a ghost of
+				// the opposite kind.
+				if len(top) != 1 || top[0].ID != id {
+					t.Fatalf("countdown %d: id %d was present but unreachable, top result %v", cd, id, top)
+				}
+			}
+			if allIDs(t, idx, vec)[id] {
+				t.Fatalf("countdown %d: id %d still searchable (Delete error: %v)", cd, id, delErr)
+			}
+		}
+		if got := idx.Stats().Count; got != n {
+			t.Fatalf("countdown %d: count %d after deleting the batch, want %d", cd, got, n)
+		}
+	}
+	if !completed {
+		t.Fatal("the sweep never reached a successful BulkAdd; raise the countdown limit")
+	}
+}
+
+// TestHNSWIndex_GobDecodeSanitizesParameters loads a file whose M and Ef are
+// out of range, as a corrupt or crafted file's would be. The decode must
+// fall back to the defaults: with the defaults in place, a small index
+// answers a small search from the graph alone, without the brute-force
+// fallback.
+func TestHNSWIndex_GobDecodeSanitizesParameters(t *testing.T) {
+	payload := struct {
+		Dimension    int
+		M            int
+		Ef           int
+		MaxLevel     int
+		DistanceName string
+	}{Dimension: 8, M: 0, Ef: 0, MaxLevel: -1, DistanceName: "euclidean"}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(payload); err != nil {
+		t.Fatalf("encoding the payload failed: %v", err)
+	}
+	var idx hnsw.Index
+	if err := idx.GobDecode(buf.Bytes()); err != nil {
+		t.Fatalf("GobDecode failed: %v", err)
+	}
+	rng := rand.New(rand.NewSource(12))
+	for id := 0; id < 80; id++ {
+		vec := make([]float32, 8)
+		for i := range vec {
+			vec[i] = float32(rng.NormFloat64())
+		}
+		if err := idx.Add(id, vec); err != nil {
+			t.Fatalf("Add(%d) failed: %v", id, err)
+		}
+	}
+	query := make([]float32, 8)
+	got, err := idx.Search(query, 5)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(got))
+	}
+	if fb := idx.Stats().FallbackSearches; fb != 0 {
+		t.Errorf("expected the graph to answer without the fallback, got %d fallback searches", fb)
+	}
+}
+
+// TestHNSWLevelFromUnit checks the mapping from a uniform draw to a node
+// level, including the r equal to 0 edge, whose logarithm is infinite.
+func TestHNSWLevelFromUnit(t *testing.T) {
+	if got := hnsw.LevelFromUnit(0, 16); got != hnsw.MaxLevelCap {
+		t.Errorf("LevelFromUnit(0, 16) = %d, want the cap %d", got, hnsw.MaxLevelCap)
+	}
+	if got := hnsw.LevelFromUnit(1e-300, 16); got != hnsw.MaxLevelCap {
+		t.Errorf("LevelFromUnit(1e-300, 16) = %d, want the cap %d", got, hnsw.MaxLevelCap)
+	}
+	if got := hnsw.LevelFromUnit(0.99, 16); got != 0 {
+		t.Errorf("LevelFromUnit(0.99, 16) = %d, want 0", got)
+	}
+	for _, r := range []float64{0, 1e-300, 1e-9, 0.01, 0.25, 0.5, 0.999999} {
+		got := hnsw.LevelFromUnit(r, 16)
+		if got < 0 || got > hnsw.MaxLevelCap {
+			t.Errorf("LevelFromUnit(%g, 16) = %d, out of [0, %d]", r, got, hnsw.MaxLevelCap)
+		}
 	}
 }

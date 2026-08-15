@@ -13,6 +13,10 @@ type Index interface {
 	// Add inserts a vector with a given id into the index.
 	// It returns an error when the id already exists or the vector has the
 	// wrong dimension.
+	// The index stores the slice without copying it, and a metric that
+	// normalizes does so in place, so the caller must not modify the slice
+	// after the call. This applies to every method that takes a vector,
+	// except Search, which copies its query.
 	Add(id int, vector []float32) error
 
 	// Delete removes the vector with the given id from the index.

@@ -883,3 +883,114 @@ func TestPQIVF_DeleteAllThenSearch(t *testing.T) {
 		t.Errorf("expected id 5 after the re-add, got %v", neighbors)
 	}
 }
+
+// TestPQIVF_CandidateClustersSurviveSaveLoad checks that the candidate
+// cluster count travels with the file. Loading into a zero-value index must
+// restore it: with a restored count, a small search is answered from the
+// probed cluster alone, without the brute-force fallback.
+func TestPQIVF_CandidateClustersSurviveSaveLoad(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	idx, err := pqivf.New(4,
+		pqivf.WithCoarseK(2),
+		pqivf.WithNumSubquantizers(2),
+		pqivf.WithPQK(2),
+		pqivf.WithKMeansIters(5),
+		pqivf.WithCandidateClusters(1),
+	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	vectors := map[int][]float32{
+		1: {10, 10, 0, 0},
+		2: {11, 10, 0, 0},
+		3: {-10, -10, 0, 0},
+		4: {-11, -10, 0, 0},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := idx.Save(&buf); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	var loaded pqivf.Index
+	if err := loaded.Load(&buf); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	got, err := loaded.Search([]float32{10, 10, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("Search after load failed: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Errorf("expected id 1, got %v", got)
+	}
+	if fb := loaded.Stats().FallbackSearches; fb != 0 {
+		t.Errorf("expected the probed cluster to answer without the fallback, got %d fallback searches", fb)
+	}
+}
+
+// TestPQIVF_GobDecodeRejectsInvalidParameters checks that a file whose
+// numeric parameters are out of range, as a corrupt or crafted file's would
+// be, is rejected on decode instead of causing a panic in a later
+// operation.
+func TestPQIVF_GobDecodeRejectsInvalidParameters(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload interface{}
+	}{
+		{"zero dimension", struct {
+			Dimension int
+		}{Dimension: 0}},
+		{"zero subquantizers", struct {
+			Dimension        int
+			NumSubquantizers int
+		}{Dimension: 6, NumSubquantizers: 0}},
+		{"non-divisible subquantizers", struct {
+			Dimension        int
+			NumSubquantizers int
+		}{Dimension: 6, NumSubquantizers: 4}},
+		{"zero coarseK", struct {
+			Dimension        int
+			NumSubquantizers int
+			CoarseK          int
+		}{Dimension: 6, NumSubquantizers: 2, CoarseK: 0}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := gob.NewEncoder(&buf).Encode(tc.payload); err != nil {
+				t.Fatalf("encoding the payload failed: %v", err)
+			}
+			var idx pqivf.Index
+			if err := idx.GobDecode(buf.Bytes()); err == nil {
+				t.Error("expected error for the invalid file, got none")
+			}
+		})
+	}
+}
+
+// TestPQIVF_BulkDeleteDoesNotReorderInput checks that BulkDelete does not
+// reorder the caller's id slice as a side effect.
+func TestPQIVF_BulkDeleteDoesNotReorderInput(t *testing.T) {
+	idx := newIndex(t, 4, 2, 2, 2, 5)
+	vectors := map[int][]float32{
+		1: {1, 0, 0, 0},
+		2: {0, 1, 0, 0},
+		3: {0, 0, 1, 0},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	ids := []int{3, 1, 2}
+	if err := idx.BulkDelete(ids); err != nil {
+		t.Fatalf("BulkDelete failed: %v", err)
+	}
+	if ids[0] != 3 || ids[1] != 1 || ids[2] != 2 {
+		t.Errorf("BulkDelete reordered the caller's slice to %v", ids)
+	}
+}

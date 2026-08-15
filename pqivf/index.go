@@ -348,8 +348,10 @@ func (pq *Index) BulkDelete(ids []int) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
-	sort.Ints(ids)
-	for _, id := range ids {
+	// Sort a copy, so the caller's slice keeps its order.
+	sorted := append([]int(nil), ids...)
+	sort.Ints(sorted)
+	for _, id := range sorted {
 		// If in pending, just delete.
 		if _, exists := pq.pendingVectors[id]; exists {
 			delete(pq.pendingVectors, id)
@@ -825,6 +827,7 @@ type serializedPQIVF struct {
 	Trained                 bool
 	PendingVectors          map[int][]float32
 	FormatVersion           int
+	NumCandidateClusters    int
 }
 
 // formatVersion is the on-disk format version written by GobEncode. Files
@@ -850,6 +853,7 @@ func (pq *Index) GobEncode() ([]byte, error) {
 		Trained:                 pq.trained,
 		PendingVectors:          pq.pendingVectors,
 		FormatVersion:           formatVersion,
+		NumCandidateClusters:    pq.numCandidateClusters,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -871,11 +875,32 @@ func (pq *Index) GobDecode(data []byte) error {
 		return fmt.Errorf("index file has format version %d, but this build supports up to %d",
 			ser.FormatVersion, formatVersion)
 	}
+	// A corrupt or crafted file can carry parameters New would reject, and
+	// some of them cause a panic in a later operation, such as a division
+	// by a zero subquantizer count. Real files always carry valid values,
+	// so an invalid one is an error, not a fallback.
+	if ser.Dimension <= 0 {
+		return fmt.Errorf("serialized index has invalid dimension %d", ser.Dimension)
+	}
+	if ser.NumSubquantizers <= 0 || ser.Dimension%ser.NumSubquantizers != 0 {
+		return fmt.Errorf("serialized index has invalid subquantizer count %d for dimension %d",
+			ser.NumSubquantizers, ser.Dimension)
+	}
+	if ser.CoarseK <= 0 || ser.PqK <= 0 || ser.KMeansIters <= 0 {
+		return fmt.Errorf("serialized index has invalid training parameters: coarseK %d, pqK %d, kMeansIters %d",
+			ser.CoarseK, ser.PqK, ser.KMeansIters)
+	}
 	pq.dimension = ser.Dimension
 	pq.coarseK = ser.CoarseK
 	pq.coarseCentroids = ser.CoarseCentroids
 	pq.clusterCounts = ser.ClusterCounts
+	if pq.clusterCounts == nil {
+		pq.clusterCounts = make(map[int]int)
+	}
 	pq.invertedLists = ser.InvertedLists
+	if pq.invertedLists == nil {
+		pq.invertedLists = make(map[int][]pqEntry)
+	}
 	pq.numSubquantizers = ser.NumSubquantizers
 	pq.codebooks = ser.Codebooks
 	pq.pqK = ser.PqK
@@ -885,6 +910,14 @@ func (pq *Index) GobDecode(data []byte) error {
 	pq.pendingVectors = ser.PendingVectors
 	if pq.pendingVectors == nil {
 		pq.pendingVectors = make(map[int][]float32)
+	}
+	// Files written before the field existed decode it as zero. Keep the
+	// configured value in that case, and fall back to the default of 3 when
+	// there is none to keep.
+	if ser.NumCandidateClusters > 0 {
+		pq.numCandidateClusters = ser.NumCandidateClusters
+	} else if pq.numCandidateClusters <= 0 {
+		pq.numCandidateClusters = 3
 	}
 	pq.idToCluster = make(map[int]int)
 	// Rebuild idToCluster mapping from the inverted lists.

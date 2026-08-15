@@ -195,7 +195,17 @@ func (h *Index) randomLevel() int {
 	seededRandMu.Lock()
 	r := seededRand.Float64()
 	seededRandMu.Unlock()
-	level := int(-math.Log(r) / math.Log(float64(h.m)))
+	return levelFromUnit(r, h.m)
+}
+
+// levelFromUnit maps a uniform draw r in [0, 1) to a node level. A draw of
+// exactly 0 has an infinite logarithm, and converting an infinite float to
+// int is implementation-defined, so it maps straight to the cap.
+func levelFromUnit(r float64, m int) int {
+	if r <= 0 {
+		return maxLevelCap
+	}
+	level := int(-math.Log(r) / math.Log(float64(m)))
 	if level > maxLevelCap {
 		level = maxLevelCap
 	}
@@ -286,8 +296,17 @@ func (h *Index) GobDecode(data []byte) error {
 			si.FormatVersion, formatVersion)
 	}
 	h.dimension = si.Dimension
+	// A corrupt or crafted file can carry parameters New would reject, and
+	// they silently break graph maintenance. Fall back to the defaults for
+	// any out-of-range value.
 	h.m = si.M
+	if h.m < 2 {
+		h.m = defaultM
+	}
 	h.ef = si.Ef
+	if h.ef < 1 {
+		h.ef = defaultEf
+	}
 	h.maxLevel = si.MaxLevel
 	h.exhaustiveSearch = si.ExhaustiveSearch
 	// Files written before the field existed decode it as zero. Fall back
@@ -509,6 +528,25 @@ func minInt(a, b int) int {
 	return b
 }
 
+// rollbackInsert removes a node whose insertNode call failed partway. The
+// partial link state is symmetric at every error point, so removeNodeLinks
+// unlinks the node completely. The entry point is restored when the failed
+// node had claimed it. The caller must hold the lock, and the node must be
+// present in the maps.
+func (h *Index) rollbackInsert(n *node) {
+	h.removeNodeLinks(n)
+	delete(h.nodes, n.ID)
+	if level, ok := h.nodesByLevel[n.Level]; ok {
+		delete(level, n.ID)
+		if len(level) == 0 {
+			delete(h.nodesByLevel, n.Level)
+		}
+	}
+	if h.entryPoint == n {
+		h.resetEntryPoint(n.ID)
+	}
+}
+
 // insertNode adds a node into the HNSW graph, updating links as needed.
 func (h *Index) insertNode(n *node, searchEf int) error {
 	// If index is empty, set this node as entry point.
@@ -663,10 +701,7 @@ func (h *Index) Add(id int, vector []float32) error {
 	}
 	h.nodesByLevel[level][id] = struct{}{}
 	if err := h.insertNode(newNode, h.efConstruction); err != nil {
-		delete(h.nodes, id)
-		if _, ok := h.nodesByLevel[level]; ok {
-			delete(h.nodesByLevel[level], id)
-		}
+		h.rollbackInsert(newNode)
 		return err
 	}
 	return nil
@@ -712,22 +747,27 @@ func (h *Index) Delete(id int) error {
 	return nil
 }
 
-// Update changes the vector for an existing node and re-inserts it in the graph.
-func (h *Index) Update(id int, vector []float32) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	n, exists := h.nodes[id]
-	if !exists {
-		return fmt.Errorf("id %d not found", id)
+// reinsertLocked replaces the vector of an existing node and relinks it in
+// the graph. When the relinking fails, the node's previous vector, its
+// links, and the entry point are restored, so a failed update leaves every
+// stored vector in place and every id reachable as before. A neighbor list
+// that another node trimmed during the attempt can come out shorter, but it
+// still holds valid neighbors. The caller must hold the lock.
+func (h *Index) reinsertLocked(n *node, vector []float32) error {
+	oldVector := n.Vector
+	oldEntryPoint := h.entryPoint
+	oldMaxLevel := h.maxLevel
+	// removeNodeLinks empties the link slices in place, so the restore
+	// needs copies of the current link lists.
+	oldLinks := make(map[int][]*node, len(n.Links))
+	for level, neighbors := range n.Links {
+		oldLinks[level] = append([]*node(nil), neighbors...)
 	}
-	if len(vector) != h.dimension {
-		return fmt.Errorf("vector dimension %d does not match index dimension %d",
-			len(vector), h.dimension)
+	oldReverse := make(map[int][]*node, len(n.ReverseLinks))
+	for level, neighbors := range n.ReverseLinks {
+		oldReverse[level] = append([]*node(nil), neighbors...)
 	}
-	// Normalize when the metric requires normalized vectors.
-	if h.metric.Normalizes() {
-		core.NormalizeVector(vector)
-	}
+
 	h.removeNodeLinks(n)
 	n.Vector = vector
 	n.Links = make(map[int][]*node)
@@ -744,9 +784,47 @@ func (h *Index) Update(id int, vector []float32) error {
 		return nil
 	}
 	if err := h.insertNode(n, h.efConstruction); err != nil {
+		// Unlink whatever the failed reinsertion wired, then put the old
+		// vector and the old links back on both sides of every edge.
+		h.removeNodeLinks(n)
+		n.Vector = oldVector
+		n.Links = oldLinks
+		n.ReverseLinks = oldReverse
+		for level, neighbors := range oldReverse {
+			for _, nb := range neighbors {
+				nb.Links[level] = append(nb.Links[level], n)
+			}
+		}
+		for level, neighbors := range oldLinks {
+			for _, nb := range neighbors {
+				nb.ReverseLinks[level] = append(nb.ReverseLinks[level], n)
+			}
+		}
+		h.entryPoint = oldEntryPoint
+		h.maxLevel = oldMaxLevel
 		return err
 	}
 	return nil
+}
+
+// Update changes the vector for an existing node and re-inserts it in the
+// graph. A failed update restores the previous state; see reinsertLocked.
+func (h *Index) Update(id int, vector []float32) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n, exists := h.nodes[id]
+	if !exists {
+		return fmt.Errorf("id %d not found", id)
+	}
+	if len(vector) != h.dimension {
+		return fmt.Errorf("vector dimension %d does not match index dimension %d",
+			len(vector), h.dimension)
+	}
+	// Normalize when the metric requires normalized vectors.
+	if h.metric.Normalizes() {
+		core.NormalizeVector(vector)
+	}
+	return h.reinsertLocked(n, vector)
 }
 
 // BulkAdd inserts multiple vectors into the index at once.
@@ -808,6 +886,10 @@ func (h *Index) BulkAdd(vectors map[int][]float32) error {
 				h.maxLevel = newNode.Level
 			}
 			if err := h.insertNode(newNode, bulkEf); err != nil {
+				// The failing element rolls back like a failed Add. The
+				// elements inserted before it stay, which matches applying
+				// Add to every element in turn.
+				h.rollbackInsert(newNode)
 				return err
 			}
 		}
@@ -887,20 +969,7 @@ func (h *Index) BulkUpdate(updates map[int][]float32) error {
 			return fmt.Errorf("vector dimension %d does not match index dimension %d for id %d",
 				len(vector), h.dimension, id)
 		}
-		h.removeNodeLinks(n)
-		n.Vector = vector
-		n.Links = make(map[int][]*node)
-		n.ReverseLinks = make(map[int][]*node)
-		// Reinsertion must not start the search at the node itself. Move
-		// the entry point to another surviving node first.
-		if h.entryPoint == n {
-			h.resetEntryPoint(n.ID)
-		}
-		if h.entryPoint == nil {
-			// The node is the only one in the index.
-			h.entryPoint = n
-			h.maxLevel = n.Level
-		} else if err := h.insertNode(n, h.efConstruction); err != nil {
+		if err := h.reinsertLocked(n, vector); err != nil {
 			return err
 		}
 	}
@@ -963,7 +1032,11 @@ func (h *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 			candidateIDs[c.node.ID] = true
 		}
 
-		fallbackSize := k - len(candidates)
+		// The scan must gather k nearest non-candidates, not only the
+		// shortfall. With only the shortfall, the union holds exactly k
+		// entries and a poor graph candidate can never be displaced, so the
+		// search would return a wrong set despite reading every vector.
+		fallbackSize := k
 		var keys []int
 		for id := range h.nodes {
 			keys = append(keys, id)

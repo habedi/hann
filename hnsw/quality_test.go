@@ -2,6 +2,7 @@ package hnsw_test
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
 
 	"github.com/habedi/hann/core"
@@ -160,4 +161,46 @@ func TestHNSWIndex_DifferentialUpdate(t *testing.T) {
 // after a save and load round-trip of an index that has seen deletions.
 func TestHNSWIndex_DifferentialSaveLoad(t *testing.T) {
 	testutil.RunSaveLoadDifferential(t, hnswFactory(), 16, 300, 10)
+}
+
+// TestHNSWIndex_FallbackReturnsTrueTopK checks that a search that falls back
+// to the brute-force scan returns the exact k nearest neighbors. The scan
+// reads every stored vector, so nothing less is acceptable. A tiny ef forces
+// the graph to return fewer than k candidates on every query.
+func TestHNSWIndex_FallbackReturnsTrueTopK(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim, n, k := 16, 2000, 10
+	idx := newTestIndex(t, dim, hnsw.WithM(4), hnsw.WithEf(2))
+	rng := rand.New(rand.NewSource(2))
+	data := make(map[int][]float32, n)
+	for id := 0; id < n; id++ {
+		vec := make([]float32, dim)
+		for i := range vec {
+			vec[i] = float32(rng.NormFloat64())
+		}
+		data[id] = vec
+	}
+	if err := idx.BulkAdd(data); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	for qi := 0; qi < 50; qi++ {
+		query := make([]float32, dim)
+		for i := range query {
+			query[i] = float32(rng.NormFloat64())
+		}
+		want, err := testutil.BruteForceKNN(query, data, k, core.Euclidean)
+		if err != nil {
+			t.Fatalf("query %d: BruteForceKNN failed: %v", qi, err)
+		}
+		got, err := idx.Search(query, k)
+		if err != nil {
+			t.Fatalf("query %d: Search failed: %v", qi, err)
+		}
+		if recall := testutil.Recall(got, want); recall < 1.0 {
+			t.Errorf("query %d: fallback search returned recall %.2f, want 1.0", qi, recall)
+		}
+	}
+	if fb := idx.Stats().FallbackSearches; fb < 50 {
+		t.Fatalf("expected every query to use the fallback, got %d of 50", fb)
+	}
 }

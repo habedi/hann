@@ -140,7 +140,7 @@ type Index struct {
 	dimension               int               // dimension of each vector
 	points                  map[int][]float32 // mapping of point id to vector
 	tree                    *treeNode         // root of the random projection tree, nil before the first build
-	pendingAdds             map[int]struct{}  // ids added since the tree was last built
+	pendingAdds             map[int]struct{}  // ids added or updated since the tree was last built
 	staleCount              int               // ids removed or replaced that the tree may still reference
 	metric                  core.Metric       // metric used to compare vectors
 	leafCapacity            int               // maximum number of points in a leaf
@@ -598,15 +598,18 @@ func (r *Index) deleteLocked(id int) {
 	}
 }
 
-// updateLocked replaces the vector of an id. When the tree holds the id, the
-// entry stays reachable by id, but its placement in the tree goes stale.
-// That counts toward the rebuild threshold. A pending id is rescanned on
-// every search anyway, so it needs no bookkeeping. The caller must hold the
-// write lock.
+// updateLocked replaces the vector of an id. When the tree holds the id, its
+// placement in the tree goes stale: the tree would route queries near the
+// new position elsewhere. The id therefore joins the pending overlay, which
+// every search scans, so the point stays reachable at its new position. The
+// stale tree slot also counts toward the rebuild threshold. A pending id is
+// rescanned on every search anyway, so it needs no bookkeeping. The caller
+// must hold the write lock.
 func (r *Index) updateLocked(id int, vector []float32) {
 	r.points[id] = vector
 	if _, pending := r.pendingAdds[id]; !pending {
 		r.staleCount++
+		r.pendingAdds[id] = struct{}{}
 	}
 }
 
@@ -695,7 +698,9 @@ func (r *Index) Update(id int, vector []float32) error {
 }
 
 // BulkUpdate updates multiple points in the index and rebuilds the tree when
-// the overlay grows past the rebuild threshold.
+// the overlay grows past the rebuild threshold. The whole batch is checked
+// before any point is touched, so an invalid entry leaves the index
+// unchanged.
 func (r *Index) BulkUpdate(updates map[int][]float32) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -708,6 +713,8 @@ func (r *Index) BulkUpdate(updates map[int][]float32) error {
 		if _, exists := r.points[id]; !exists {
 			return fmt.Errorf("id %d not found", id)
 		}
+	}
+	for id, vector := range updates {
 		r.updateLocked(id, vector)
 	}
 	r.maybeRebuild()
@@ -790,11 +797,33 @@ func (r *Index) GobDecode(data []byte) error {
 	} else if r.metric.IsZero() {
 		return fmt.Errorf("unknown metric %q in serialized index", ser.DistanceName)
 	}
+	// A corrupt or crafted file can carry parameters New would reject, and
+	// the tree build below hangs or panics on some of them. Fall back to the
+	// defaults for any out-of-range value, like the metric handling above.
 	r.leafCapacity = ser.LeafCapacity
+	if r.leafCapacity <= 0 {
+		r.leafCapacity = defaultLeafCapacity
+	}
 	r.candidateProjections = ser.CandidateProjections
+	if r.candidateProjections <= 0 {
+		r.candidateProjections = defaultCandidateProjections
+	}
 	r.parallelThreshold = ser.ParallelThreshold
+	if r.parallelThreshold <= 0 {
+		r.parallelThreshold = defaultParallelThreshold
+	}
 	r.probeMargin = ser.ProbeMargin
+	if r.probeMargin < 0 {
+		r.probeMargin = defaultProbeMargin
+	}
 	r.allowBruteForceFallback = ser.AllowBruteForceFallback
+	if r.points == nil {
+		r.points = make(map[int][]float32)
+	}
+	if r.dimension <= 0 && len(r.points) > 0 {
+		return fmt.Errorf("serialized index has dimension %d but %d points",
+			ser.Dimension, len(r.points))
+	}
 	r.pendingAdds = make(map[int]struct{})
 	r.staleCount = 0
 	r.tree = nil
