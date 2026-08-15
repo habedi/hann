@@ -2,7 +2,10 @@ package rpt_test
 
 import (
 	"bytes"
+	"encoding/gob"
+	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/habedi/hann/core"
@@ -129,7 +132,7 @@ func TestRPTIndex_BulkOperations(t *testing.T) {
 		t.Errorf("expected count %d after BulkAdd, got %d", len(vectors), stats.Count)
 	}
 
-	// BulkUpdate: update vectors 2 and 3.
+	// Update vectors 2 and 3 through BulkUpdate.
 	updates := map[int][]float32{
 		2: {1, 1, 1, 1, 1, 1},
 		3: {4, 4, 4, 4, 4, 4},
@@ -155,7 +158,7 @@ func TestRPTIndex_BulkOperations(t *testing.T) {
 		t.Errorf("expected neighbor id 2 after BulkUpdate, but it was not found")
 	}
 
-	// BulkDelete: remove vectors 1 and 4.
+	// Remove vectors 1 and 4 through BulkDelete.
 	if err := idx.BulkDelete([]int{1, 4}); err != nil {
 		t.Fatalf("BulkDelete failed: %v", err)
 	}
@@ -322,8 +325,8 @@ func TestRPTIndex_SeedReproducibility(t *testing.T) {
 }
 
 // amortizedTestIndex builds an index whose search results depend strongly on
-// the tree structure: no probe margin and no brute-force fallback, so a
-// rebuild under a different seed is visible in the returned ids.
+// the tree structure. It uses no probe margin and no brute-force fallback.
+// A rebuild under a different seed is therefore visible in the returned ids.
 func amortizedTestIndex(t *testing.T, dim, n int) *rpt.Index {
 	t.Helper()
 	idx := mustNew(t, dim,
@@ -341,13 +344,13 @@ func amortizedTestIndex(t *testing.T, dim, n int) *rpt.Index {
 	return idx
 }
 
-// TestRPTIndex_AddDoesNotRebuildTree checks that a single Add on a built index
-// does not rebuild the tree, and that the added id is still findable through
-// the search path. The absence of a rebuild is observed through the seed: two
-// indexes are built identically under one HANN_SEED, then each receives the
-// same single Add and the same searches under a different HANN_SEED. A rebuild
-// would draw the new seed and produce diverging trees, so identical results
-// prove no rebuild happened.
+// TestRPTIndex_AddDoesNotRebuildTree checks that a single Add on a built
+// index does not rebuild the tree, and that the added id is still findable
+// through the search path. The absence of a rebuild is observed through the
+// seed. Two indexes are built identically under one HANN_SEED. Then each
+// receives the same single Add and the same searches under a different
+// HANN_SEED. A rebuild would draw the new seed and produce different trees.
+// Identical results therefore prove no rebuild happened.
 func TestRPTIndex_AddDoesNotRebuildTree(t *testing.T) {
 	const (
 		dim = 8
@@ -409,8 +412,8 @@ func TestRPTIndex_AddDoesNotRebuildTree(t *testing.T) {
 
 // TestRPTIndex_AmortizedRebuildCorrectness checks that repeated single
 // Add-then-Search cycles keep the index correct, both below the rebuild
-// threshold and across it: every added id is findable by an exact-match query,
-// and Stats reports the right count throughout.
+// threshold and across it. Every added id must be findable by an exact-match
+// query, and Stats must report the right count throughout.
 func TestRPTIndex_AmortizedRebuildCorrectness(t *testing.T) {
 	t.Setenv("HANN_SEED", "42")
 	const (
@@ -459,8 +462,8 @@ func TestRPTIndex_AmortizedRebuildCorrectness(t *testing.T) {
 	if count := idx.Stats().Count; count != total {
 		t.Fatalf("Stats().Count = %d after BulkAdd, want %d", count, total)
 	}
-	// A complete search must reach every id exactly once, both the ids the
-	// rebuild folded into the tree and any still in the overlay.
+	// A complete search must reach every id exactly once: both the ids the
+	// rebuild moved into the tree and any still in the overlay.
 	all, err := idx.Search(makeVector(rnd, dim), total)
 	if err != nil {
 		t.Fatalf("complete Search failed: %v", err)
@@ -531,6 +534,7 @@ func TestRPTIndex_SaveLoadDistance(t *testing.T) {
 // rptFactory returns the testutil factory for the RPT index with the default
 // parameters used across these tests.
 func rptFactory(t *testing.T, dim int) testutil.Factory {
+	t.Helper()
 	return testutil.Factory{
 		New: func() core.Index {
 			return mustNew(t, dim)
@@ -592,5 +596,264 @@ func TestRPTIndex_FallbackSearchCounter(t *testing.T) {
 	}
 	if got := idx.Stats().FallbackSearches; got < 1 {
 		t.Fatalf("expected at least 1 fallback search, got %d", got)
+	}
+}
+
+// TestRPTIndex_DuplicateVectors builds a tree from many copies of the same
+// vector. Every projection value is equal on such a set, so no threshold can
+// separate the points. The tree build must fall back to a split by position
+// instead of recursing forever, and searches must still work.
+func TestRPTIndex_DuplicateVectors(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim := 8
+	idx := mustNew(t, dim)
+	same := []float32{1, 2, 3, 4, 5, 6, 7, 8}
+	vectors := make(map[int][]float32, 200)
+	for id := 0; id < 200; id++ {
+		vectors[id] = testutil.CopyVector(same)
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	neighbors, err := idx.Search(testutil.CopyVector(same), 5)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(neighbors) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(neighbors))
+	}
+	for _, nb := range neighbors {
+		if nb.Distance > 1e-6 {
+			t.Errorf("id %d: expected distance 0 for a duplicate, got %v", nb.ID, nb.Distance)
+		}
+	}
+}
+
+// TestRPTIndex_MetricErrorPropagation checks that a distance failure during a
+// search is returned to the caller instead of being swallowed by the
+// parallel distance workers.
+func TestRPTIndex_MetricErrorPropagation(t *testing.T) {
+	failNow := false
+	metric := core.NewMetric("rpt_flaky_test_metric", func(a, b []float32) (float64, error) {
+		if failNow {
+			return 0, fmt.Errorf("distance failure injected by the test")
+		}
+		return core.Euclidean.Distance(a, b)
+	}, false)
+	idx := mustNew(t, 4, rpt.WithMetric(metric))
+	for id := 0; id < 10; id++ {
+		if err := idx.Add(id, []float32{float32(id), 0, 0, 0}); err != nil {
+			t.Fatalf("Add(%d) failed: %v", id, err)
+		}
+	}
+	failNow = true
+	if _, err := idx.Search([]float32{1, 0, 0, 0}, 3); err == nil {
+		t.Error("expected error from Search with a failing metric, got none")
+	}
+}
+
+// TestRPTIndex_FallbackOffShortfall runs a search that gathers fewer
+// candidates than k while the brute-force fallback is disabled. The search
+// must return the candidates it has, sorted, not an error or a full scan.
+func TestRPTIndex_FallbackOffShortfall(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim := 8
+	idx := mustNew(t, dim,
+		rpt.WithLeafCapacity(5),
+		rpt.WithProbeMargin(0),
+		rpt.WithBruteForceFallback(false))
+	data := testutil.ClusteredData(9, 100, dim, 4)
+	if err := idx.BulkAdd(data); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	neighbors, err := idx.Search(testutil.CopyVector(data[0]), 50)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(neighbors) == 0 || len(neighbors) >= 50 {
+		t.Fatalf("expected a partial result between 1 and 49 neighbors, got %d", len(neighbors))
+	}
+	for i := 1; i < len(neighbors); i++ {
+		if neighbors[i].Distance < neighbors[i-1].Distance {
+			t.Fatalf("results are not sorted at rank %d", i)
+		}
+	}
+	if got := idx.Stats().FallbackSearches; got != 0 {
+		t.Errorf("expected no fallback searches with the fallback disabled, got %d", got)
+	}
+}
+
+// TestRPTIndex_GobDecodeErrors checks that garbage bytes, a newer format
+// version, and an unknown metric name are rejected by GobDecode.
+func TestRPTIndex_GobDecodeErrors(t *testing.T) {
+	idx := mustNew(t, 4)
+	if err := idx.GobDecode([]byte("not a gob stream")); err == nil {
+		t.Error("expected error decoding garbage bytes, got none")
+	}
+
+	// A file with a newer format version must be rejected. The gob decoder
+	// matches struct fields by name, so a minimal struct stands in for a
+	// future on-disk format.
+	future := struct{ FormatVersion int }{FormatVersion: 999}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(future); err != nil {
+		t.Fatalf("encoding the future format failed: %v", err)
+	}
+	err := idx.GobDecode(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected error for a newer format version, got none")
+	}
+	if !strings.Contains(err.Error(), "format version") {
+		t.Errorf("expected a format version error, got %v", err)
+	}
+
+	// An unknown metric name is an error when the decoding index has no
+	// metric of its own to keep. A zero-value index has none.
+	unknown := struct{ DistanceName string }{DistanceName: "no_such_metric"}
+	buf.Reset()
+	if err := gob.NewEncoder(&buf).Encode(unknown); err != nil {
+		t.Fatalf("encoding the unknown metric failed: %v", err)
+	}
+	var zero rpt.Index
+	err = zero.GobDecode(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected error for an unknown metric on a zero-value index, got none")
+	}
+	if !strings.Contains(err.Error(), "unknown metric") {
+		t.Errorf("expected an unknown metric error, got %v", err)
+	}
+}
+
+// TestRPTIndex_UpdatedVectorReachableAtNewPosition checks that a point moved
+// by Update or BulkUpdate is found by a query at its new position before any
+// tree rebuild. The probe margin is zero and k is small, so the tree alone
+// must produce the point; the brute-force fallback must stay unused.
+func TestRPTIndex_UpdatedVectorReachableAtNewPosition(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim := 16
+	idx := mustNew(t, dim, rpt.WithLeafCapacity(16), rpt.WithProbeMargin(0))
+	rng := rand.New(rand.NewSource(1))
+	pts := make(map[int][]float32, 1000)
+	for id := 0; id < 1000; id++ {
+		vec := make([]float32, dim)
+		for i := range vec {
+			vec[i] = float32(rng.NormFloat64())
+		}
+		pts[id] = vec
+	}
+	if err := idx.BulkAdd(pts); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+
+	farA := make([]float32, dim)
+	farB := make([]float32, dim)
+	for i := range farA {
+		farA[i] = 100
+		farB[i] = -100
+	}
+	if err := idx.Update(7, farA); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if err := idx.BulkUpdate(map[int][]float32{8: farB}); err != nil {
+		t.Fatalf("BulkUpdate failed: %v", err)
+	}
+
+	got, err := idx.Search(testutil.CopyVector(farA), 1)
+	if err != nil {
+		t.Fatalf("Search at the Update position failed: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 7 {
+		t.Errorf("query at the updated position: got %v, want id 7", got)
+	}
+	got, err = idx.Search(testutil.CopyVector(farB), 1)
+	if err != nil {
+		t.Fatalf("Search at the BulkUpdate position failed: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 8 {
+		t.Errorf("query at the bulk-updated position: got %v, want id 8", got)
+	}
+	if fb := idx.Stats().FallbackSearches; fb != 0 {
+		t.Errorf("expected no fallback searches, got %d", fb)
+	}
+}
+
+// TestRPTIndex_BulkUpdateInvalidLeavesIndexUnchanged checks that a batch with
+// one unknown id changes nothing: every valid entry must stay at its old
+// position. The check runs on many fresh indexes, because a partial
+// application depends on map iteration order.
+func TestRPTIndex_BulkUpdateInvalidLeavesIndexUnchanged(t *testing.T) {
+	dim := 8
+	for round := 0; round < 20; round++ {
+		idx := mustNew(t, dim)
+		for id := 0; id < 10; id++ {
+			vec := make([]float32, dim)
+			vec[id%dim] = float32(10 * (id + 1))
+			if err := idx.Add(id, vec); err != nil {
+				t.Fatalf("Add(%d) failed: %v", id, err)
+			}
+		}
+		updates := make(map[int][]float32, 11)
+		for id := 0; id < 10; id++ {
+			moved := make([]float32, dim)
+			moved[(id+1)%dim] = float32(-10 * (id + 1))
+			updates[id] = moved
+		}
+		updates[99] = make([]float32, dim) // unknown id
+		if err := idx.BulkUpdate(updates); err == nil {
+			t.Fatal("expected error from BulkUpdate with an unknown id, got none")
+		}
+		for id := 0; id < 10; id++ {
+			orig := make([]float32, dim)
+			orig[id%dim] = float32(10 * (id + 1))
+			got, err := idx.Search(orig, 1)
+			if err != nil {
+				t.Fatalf("round %d: Search failed: %v", round, err)
+			}
+			if len(got) != 1 || got[0].ID != id || got[0].Distance > 1e-6 {
+				t.Fatalf("round %d: id %d moved despite the failed BulkUpdate: %v", round, id, got)
+			}
+		}
+	}
+}
+
+// TestRPTIndex_GobDecodeSanitizesParameters loads a file whose tuning
+// parameters are out of range, as a corrupt or crafted file's would be. The
+// decode must fall back to the defaults instead of panicking or hanging in
+// the Load-time tree build.
+func TestRPTIndex_GobDecodeSanitizesParameters(t *testing.T) {
+	payload := struct {
+		Dimension            int
+		Points               map[int][]float32
+		DistanceName         string
+		LeafCapacity         int
+		CandidateProjections int
+		ParallelThreshold    int
+		ProbeMargin          float64
+	}{
+		Dimension:            4,
+		Points:               map[int][]float32{1: {1, 0, 0, 0}, 2: {0, 1, 0, 0}},
+		DistanceName:         "euclidean",
+		LeafCapacity:         0,
+		CandidateProjections: 0,
+		ParallelThreshold:    0,
+		ProbeMargin:          -1,
+	}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(payload); err != nil {
+		t.Fatalf("encoding the payload failed: %v", err)
+	}
+	var idx rpt.Index
+	if err := idx.GobDecode(buf.Bytes()); err != nil {
+		t.Fatalf("GobDecode failed: %v", err)
+	}
+	got, err := idx.Search([]float32{1, 0, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("Search after decode failed: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Errorf("expected id 1, got %v", got)
+	}
+	if err := idx.Add(3, []float32{0, 0, 1, 0}); err != nil {
+		t.Errorf("Add after decode failed: %v", err)
 	}
 }

@@ -147,7 +147,7 @@ func parseValue[T int | float32 | float64](s string) (T, error) {
 func LoadTrainingVectors(dir string) (map[int][]float32, error) {
 	trainPath := filepath.Join(dir, "train.csv")
 	log.Printf("Loading training vectors from: %s", trainPath)
-	// reuse generic CSV reader (no header in these CSV files)
+	// Reuse the generic CSV reader. These CSV files have no header.
 	vectors, err := readCSV[float32](trainPath, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load train.csv: %w", err)

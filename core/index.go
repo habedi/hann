@@ -1,3 +1,6 @@
+// Package core declares the Index interface the hann indexes implement,
+// together with the distance functions, the metric registry, and the
+// shared vector operations.
 package core
 
 import (
@@ -13,6 +16,10 @@ type Index interface {
 	// Add inserts a vector with a given id into the index.
 	// It returns an error when the id already exists or the vector has the
 	// wrong dimension.
+	// The index stores the slice without copying it, and a metric that
+	// normalizes does so in place, so the caller must not modify the slice
+	// after the call. This applies to every method that takes a vector,
+	// except Search, which copies its query.
 	Add(id int, vector []float32) error
 
 	// Delete removes the vector with the given id from the index.
@@ -21,7 +28,7 @@ type Index interface {
 
 	// Update replaces the vector associated with the given id atomically.
 	// It returns an error when the id does not exist or the vector has the
-	// wrong dimension, and a failed update leaves the index unchanged.
+	// wrong dimension. A failed update leaves the index unchanged.
 	Update(id int, vector []float32) error
 
 	// Search returns the ids and distances of the k nearest neighbors for a
@@ -39,8 +46,8 @@ type Index interface {
 }
 
 // BulkIndex is implemented by indexes that apply batches under a single
-// critical section. The batched methods behave like their single-item
-// counterparts applied to every element.
+// critical section. Each batched method behaves like its single-item
+// counterpart applied to every element.
 type BulkIndex interface {
 	Index
 
@@ -61,8 +68,8 @@ type Trainer interface {
 	Train() error
 }
 
-// BulkAdd inserts multiple vectors, using the index's batched fast path when
-// it has one and falling back to per-item calls in ascending id order.
+// BulkAdd inserts multiple vectors. It uses the index's batched fast path
+// when it has one. Otherwise it makes per-item calls in ascending id order.
 func BulkAdd(idx Index, vectors map[int][]float32) error {
 	if bulk, ok := idx.(BulkIndex); ok {
 		return bulk.BulkAdd(vectors)
@@ -75,8 +82,8 @@ func BulkAdd(idx Index, vectors map[int][]float32) error {
 	return nil
 }
 
-// BulkDelete removes multiple vectors, using the index's batched fast path
-// when it has one and falling back to per-item calls.
+// BulkDelete removes multiple vectors. It uses the index's batched fast path
+// when it has one. Otherwise it makes per-item calls.
 func BulkDelete(idx Index, ids []int) error {
 	if bulk, ok := idx.(BulkIndex); ok {
 		return bulk.BulkDelete(ids)
@@ -89,8 +96,8 @@ func BulkDelete(idx Index, ids []int) error {
 	return nil
 }
 
-// BulkUpdate replaces multiple vectors, using the index's batched fast path
-// when it has one and falling back to per-item calls in ascending id order.
+// BulkUpdate replaces multiple vectors. It uses the index's batched fast path
+// when it has one. Otherwise it makes per-item calls in ascending id order.
 func BulkUpdate(idx Index, updates map[int][]float32) error {
 	if bulk, ok := idx.(BulkIndex); ok {
 		return bulk.BulkUpdate(updates)
@@ -103,8 +110,8 @@ func BulkUpdate(idx Index, updates map[int][]float32) error {
 	return nil
 }
 
-// sortedKeys returns the map's keys in ascending order, so the fallback loops
-// apply batches deterministically.
+// sortedKeys returns the map's keys in ascending order. This gives the
+// fallback loops a fixed order, so a batch is applied the same way every run.
 func sortedKeys(m map[int][]float32) []int {
 	keys := make([]int, 0, len(m))
 	for id := range m {
@@ -127,6 +134,6 @@ type IndexStats struct {
 	Distance  string // name of the metric used by the index.
 
 	// FallbackSearches is the number of searches so far that fell back to a
-	// brute-force scan because the index structure yielded too few candidates.
+	// brute-force scan because the index structure found too few candidates.
 	FallbackSearches int64
 }

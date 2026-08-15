@@ -47,8 +47,8 @@ func TestPQIVF_SyntheticRecall(t *testing.T) {
 	t.Logf("PQIVF recall@%d over %d queries: %.3f", k, q, recall)
 
 	// PQ quantization keeps recall well below 1 on this data. Observed
-	// recall over seven runs ranged from 0.205 to 0.300, so the threshold
-	// sits well below the minimum to absorb k-means seeding variance.
+	// recall over seven runs ranged from 0.205 to 0.300. The threshold sits
+	// well below that minimum to absorb k-means seeding variance.
 	const threshold = 0.10
 	if recall < threshold {
 		t.Fatalf("recall %.3f is below the threshold %.3f", recall, threshold)
@@ -57,8 +57,8 @@ func TestPQIVF_SyntheticRecall(t *testing.T) {
 
 // TestPQIVF_DifferentialBulkSequential compares an index built through Add
 // and Delete with one built through BulkAdd and BulkDelete. Distances are
-// quantized and the two indexes train independently, so only the id sets and
-// the counts are compared, not the rankings.
+// quantized, and the two indexes train independently. So the test compares
+// only the id sets and the counts, not the rankings.
 func TestPQIVF_DifferentialBulkSequential(t *testing.T) {
 	factory := testutil.Factory{
 		New: func() core.Index {
@@ -77,4 +77,20 @@ func TestPQIVF_DifferentialBulkSequential(t *testing.T) {
 		Metric:         core.Euclidean,
 	}
 	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
+}
+
+// TestPQIVF_DifferentialUpdate compares an index whose vectors were moved
+// through Update and BulkUpdate with one built directly from the final data.
+// Distances are quantized, so the check covers the id bookkeeping: a
+// complete search must return every surviving id exactly once.
+func TestPQIVF_DifferentialUpdate(t *testing.T) {
+	testutil.RunUpdateDifferential(t, pqivfFactory(t), 16, 300, 10)
+}
+
+// TestPQIVF_DifferentialSaveLoad compares complete searches before and after
+// a save and load round-trip. The codebooks travel with the file. The loaded
+// index must therefore reproduce the original distances rank by rank, even
+// though they are quantized.
+func TestPQIVF_DifferentialSaveLoad(t *testing.T) {
+	testutil.RunSaveLoadDifferential(t, pqivfFactory(t), 16, 300, 10)
 }

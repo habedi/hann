@@ -14,8 +14,8 @@ import (
 )
 
 func main() {
-	// Start the pprof HTTP server on port 6060.
-	// This will expose profiling endpoints at /debug/pprof/
+	// Start the pprof HTTP server on port 6060. It exposes the profiling
+	// endpoints at /debug/pprof/.
 	go func() {
 		log.Println("Starting pprof server on :6060")
 		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
@@ -23,7 +23,7 @@ func main() {
 		}
 	}()
 
-	// Benchmarking PQIVF index with FashionMNIST and SIFT datasets
+	// Benchmark the PQIVF index on the FashionMNIST and SIFT datasets.
 	BenchPQIVFIndexFashionMNIST()
 	BenchPQIVFIndexSIFT()
 }

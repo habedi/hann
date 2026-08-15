@@ -12,8 +12,8 @@ import (
 	"github.com/habedi/hann/pqivf"
 )
 
-// newIndex constructs an index with the given parameters through New and its
-// options, failing the test on a constructor error.
+// newIndex builds an index with the given parameters through New and its
+// options. It fails the test when the constructor returns an error.
 func newIndex(t *testing.T, dim, coarseK, numSubquantizers, pqK, kMeansIters int) *pqivf.Index {
 	t.Helper()
 	idx, err := pqivf.New(dim,
@@ -125,7 +125,7 @@ func TestPQIVF_BulkOperations(t *testing.T) {
 		t.Errorf("expected count %d after BulkAdd, got %d", len(vectors), stats.Count)
 	}
 
-	// BulkUpdate: update vector 2 and 3.
+	// Update vectors 2 and 3 through BulkUpdate.
 	updates := map[int][]float32{
 		2: {1, 1, 1, 1, 1, 1},
 		3: {4, 4, 4, 4, 4, 4},
@@ -155,7 +155,7 @@ func TestPQIVF_BulkOperations(t *testing.T) {
 		t.Errorf("expected neighbor id 2 after BulkUpdate, but it was not found")
 	}
 
-	// BulkDelete: remove vector 1 and 4.
+	// Remove vectors 1 and 4 through BulkDelete.
 	if err := idx.BulkDelete([]int{1, 4}); err != nil {
 		t.Fatalf("BulkDelete failed: %v", err)
 	}
@@ -253,8 +253,8 @@ func TestPQIVF_TrainAndSearch(t *testing.T) {
 	}
 }
 
-// trainedIndex returns an index trained on four fixed vectors, for the tests
-// that exercise mutations after training.
+// trainedIndex returns an index trained on four fixed vectors. The tests
+// that mutate a trained index start from it.
 func trainedIndex(t *testing.T) *pqivf.Index {
 	t.Helper()
 	idx := newIndex(t, 6, 3, 2, 256, 10)
@@ -273,8 +273,8 @@ func trainedIndex(t *testing.T) *pqivf.Index {
 	return idx
 }
 
-// searchIDs returns the ids Search finds for the query, failing the test on a
-// search error.
+// searchIDs returns the ids Search finds for the query. It fails the test
+// when the search returns an error.
 func searchIDs(t *testing.T, idx *pqivf.Index, query []float32, k int) map[int]bool {
 	t.Helper()
 	neighbors, err := idx.Search(query, k)
@@ -505,10 +505,10 @@ func TestPQIVF_InvalidCoarseK(t *testing.T) {
 	}
 }
 
-// TestPQIVF_NewValidation covers the remaining constructor errors: a
-// non-positive dimension, PQ codebook size, k-means iteration count, or
-// subquantizer count, and a dimension that the subquantizer count does not
-// divide.
+// TestPQIVF_NewValidation covers the remaining constructor errors. One group
+// is a non-positive dimension, PQ codebook size, k-means iteration count, or
+// subquantizer count. The other is a dimension that the subquantizer count
+// does not divide.
 func TestPQIVF_NewValidation(t *testing.T) {
 	cases := []struct {
 		name string
@@ -533,9 +533,9 @@ func TestPQIVF_NewValidation(t *testing.T) {
 	}
 }
 
-// TestPQIVF_DefaultNumSubquantizers checks the default subquantizer rule: the
-// largest of 8, 4, 2, and 1 that divides the dimension is chosen, so every
-// positive dimension yields a valid index without options.
+// TestPQIVF_DefaultNumSubquantizers checks the default subquantizer rule.
+// The largest of 8, 4, 2, and 1 that divides the dimension is chosen, so
+// every positive dimension gives a valid index without options.
 func TestPQIVF_DefaultNumSubquantizers(t *testing.T) {
 	for _, dim := range []int{16, 12, 6, 7} {
 		if _, err := pqivf.New(dim); err != nil {
@@ -545,8 +545,8 @@ func TestPQIVF_DefaultNumSubquantizers(t *testing.T) {
 }
 
 // clusteredVectors returns three vectors around each of four well-separated
-// centers, keyed by ids 0 through 11, so coarse clustering with four clusters
-// cannot put every vector into one cluster.
+// centers, keyed by ids 0 through 11. Coarse clustering with four clusters
+// therefore cannot put every vector into one cluster.
 func clusteredVectors() map[int][]float32 {
 	vectors := make(map[int][]float32, 12)
 	id := 0
@@ -561,10 +561,10 @@ func clusteredVectors() map[int][]float32 {
 }
 
 // TestPQIVF_CandidateClustersAndFallbackOff checks the observable effect of
-// WithCandidateClusters and WithBruteForceFallback: with one probed cluster
+// WithCandidateClusters and WithBruteForceFallback. With one probed cluster
 // and the fallback off, a k larger than one cluster's entries returns fewer
-// than k results, while the same search with the fallback on returns all of
-// them through the brute-force scan.
+// than k results. The same search with the fallback on returns all of them
+// through the brute-force scan.
 func TestPQIVF_CandidateClustersAndFallbackOff(t *testing.T) {
 	vectors := clusteredVectors()
 	query := vectors[0]
@@ -718,8 +718,8 @@ func TestPQIVF_ZeroValueIndexRejectsAdd(t *testing.T) {
 	}
 }
 
-// TestPQIVF_SearchWrongDimensionAfterTrain checks the query dimension check on
-// a trained index, where the untrained-index error cannot mask it.
+// TestPQIVF_SearchWrongDimensionAfterTrain checks the query dimension check
+// on a trained index. There the untrained-index error cannot hide it.
 func TestPQIVF_SearchWrongDimensionAfterTrain(t *testing.T) {
 	idx := newIndex(t, 4, 2, 2, 4, 5)
 	if err := idx.BulkAdd(map[int][]float32{
@@ -762,9 +762,10 @@ func TestPQIVF_GobDecodeErrors(t *testing.T) {
 }
 
 // TestPQIVF_GobDecodeLegacyPendingVectors checks that a file written before
-// the PendingVectors field existed loads into a usable index: the decoded nil
-// map is replaced, so a later Add works. The gob decoder matches struct fields
-// by name, so a struct without the field stands in for the old format.
+// the PendingVectors field existed loads into a usable index. The decoded
+// nil map is replaced, so a later Add works. The gob decoder matches struct
+// fields by name, so a struct without the field stands in for the old
+// format.
 func TestPQIVF_GobDecodeLegacyPendingVectors(t *testing.T) {
 	legacy := struct {
 		Dimension        int
@@ -792,6 +793,7 @@ func TestPQIVF_GobDecodeLegacyPendingVectors(t *testing.T) {
 // pqivfFactory returns the factory shared by the property-based and the
 // concurrency tests.
 func pqivfFactory(t *testing.T) testutil.Factory {
+	t.Helper()
 	return testutil.Factory{
 		New: func() core.Index {
 			return newIndex(t, 16, 2, 2, 4, 5)
@@ -813,8 +815,9 @@ func pqivfFactory(t *testing.T) testutil.Factory {
 // TestPQIVF_FallbackSearchCounter checks that a search that falls back to a
 // brute-force scan is visible in Stats.
 func TestPQIVF_FallbackSearchCounter(t *testing.T) {
-	// More clusters than the search probes, so a large k cannot be satisfied
-	// from the probed clusters alone and the brute-force fallback triggers.
+	// The index has more clusters than the search probes. A large k then
+	// cannot be filled from the probed clusters alone, so the brute-force
+	// fallback triggers.
 	pq := newIndex(t, 4, 8, 2, 2, 5)
 	for id := 0; id < 40; id++ {
 		vec := []float32{float32(id), float32(id + 1), float32(id + 2), float32(id + 3)}
@@ -833,5 +836,162 @@ func TestPQIVF_FallbackSearchCounter(t *testing.T) {
 	}
 	if got := pq.Stats().FallbackSearches; got < 1 {
 		t.Fatalf("expected at least 1 fallback search, got %d", got)
+	}
+}
+
+// TestPQIVF_DeleteAllThenSearch empties a trained index through Delete. A
+// search must then return no results and no error, and a later Add must
+// make the index searchable again.
+func TestPQIVF_DeleteAllThenSearch(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim := 4
+	idx := newIndex(t, dim, 2, 2, 2, 5)
+	vectors := map[int][]float32{
+		1: {1, 0, 0, 0},
+		2: {0, 1, 0, 0},
+		3: {0, 0, 1, 0},
+		4: {0, 0, 0, 1},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+	for id := range vectors {
+		if err := idx.Delete(id); err != nil {
+			t.Fatalf("Delete(%d) failed: %v", id, err)
+		}
+	}
+	if got := idx.Stats().Count; got != 0 {
+		t.Fatalf("expected count 0 after deleting everything, got %d", got)
+	}
+	neighbors, err := idx.Search([]float32{1, 0, 0, 0}, 2)
+	if err != nil {
+		t.Fatalf("Search on the emptied index failed: %v", err)
+	}
+	if len(neighbors) != 0 {
+		t.Fatalf("expected no results from the emptied index, got %v", neighbors)
+	}
+	if err := idx.Add(5, []float32{1, 1, 0, 0}); err != nil {
+		t.Fatalf("Add after emptying failed: %v", err)
+	}
+	neighbors, err = idx.Search([]float32{1, 1, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("Search after the re-add failed: %v", err)
+	}
+	if len(neighbors) != 1 || neighbors[0].ID != 5 {
+		t.Errorf("expected id 5 after the re-add, got %v", neighbors)
+	}
+}
+
+// TestPQIVF_CandidateClustersSurviveSaveLoad checks that the candidate
+// cluster count travels with the file. Loading into a zero-value index must
+// restore it: with a restored count, a small search is answered from the
+// probed cluster alone, without the brute-force fallback.
+func TestPQIVF_CandidateClustersSurviveSaveLoad(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	idx, err := pqivf.New(4,
+		pqivf.WithCoarseK(2),
+		pqivf.WithNumSubquantizers(2),
+		pqivf.WithPQK(2),
+		pqivf.WithKMeansIters(5),
+		pqivf.WithCandidateClusters(1),
+	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	vectors := map[int][]float32{
+		1: {10, 10, 0, 0},
+		2: {11, 10, 0, 0},
+		3: {-10, -10, 0, 0},
+		4: {-11, -10, 0, 0},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := idx.Save(&buf); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	var loaded pqivf.Index
+	if err := loaded.Load(&buf); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	got, err := loaded.Search([]float32{10, 10, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("Search after load failed: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Errorf("expected id 1, got %v", got)
+	}
+	if fb := loaded.Stats().FallbackSearches; fb != 0 {
+		t.Errorf("expected the probed cluster to answer without the fallback, got %d fallback searches", fb)
+	}
+}
+
+// TestPQIVF_GobDecodeRejectsInvalidParameters checks that a file whose
+// numeric parameters are out of range, as a corrupt or crafted file's would
+// be, is rejected on decode instead of causing a panic in a later
+// operation.
+func TestPQIVF_GobDecodeRejectsInvalidParameters(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload interface{}
+	}{
+		{"zero dimension", struct {
+			Dimension int
+		}{Dimension: 0}},
+		{"zero subquantizers", struct {
+			Dimension        int
+			NumSubquantizers int
+		}{Dimension: 6, NumSubquantizers: 0}},
+		{"non-divisible subquantizers", struct {
+			Dimension        int
+			NumSubquantizers int
+		}{Dimension: 6, NumSubquantizers: 4}},
+		{"zero coarseK", struct {
+			Dimension        int
+			NumSubquantizers int
+			CoarseK          int
+		}{Dimension: 6, NumSubquantizers: 2, CoarseK: 0}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := gob.NewEncoder(&buf).Encode(tc.payload); err != nil {
+				t.Fatalf("encoding the payload failed: %v", err)
+			}
+			var idx pqivf.Index
+			if err := idx.GobDecode(buf.Bytes()); err == nil {
+				t.Error("expected error for the invalid file, got none")
+			}
+		})
+	}
+}
+
+// TestPQIVF_BulkDeleteDoesNotReorderInput checks that BulkDelete does not
+// reorder the caller's id slice as a side effect.
+func TestPQIVF_BulkDeleteDoesNotReorderInput(t *testing.T) {
+	idx := newIndex(t, 4, 2, 2, 2, 5)
+	vectors := map[int][]float32{
+		1: {1, 0, 0, 0},
+		2: {0, 1, 0, 0},
+		3: {0, 0, 1, 0},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	ids := []int{3, 1, 2}
+	if err := idx.BulkDelete(ids); err != nil {
+		t.Fatalf("BulkDelete failed: %v", err)
+	}
+	if ids[0] != 3 || ids[1] != 1 || ids[2] != 2 {
+		t.Errorf("BulkDelete reordered the caller's slice to %v", ids)
 	}
 }

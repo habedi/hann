@@ -16,10 +16,10 @@ const (
 	benchQueries  = 100
 )
 
-// BenchmarkBuild measures constructing an index, bulk-adding the full dataset,
-// and training, so it reports whole-build time. Train is included because an
-// untrained PQIVF index holds its vectors unquantized and cannot serve a
-// search.
+// BenchmarkBuild measures three steps as one: constructing an index,
+// bulk-adding the full dataset, and training. It reports whole-build time.
+// Train is included because an untrained PQIVF index holds its vectors
+// unquantized and cannot serve a search.
 func BenchmarkBuild(b *testing.B) {
 	data := testutil.ClusteredData(benchSeed, benchN, benchDim, benchClusters)
 	b.ReportAllocs()
@@ -38,8 +38,8 @@ func BenchmarkBuild(b *testing.B) {
 	}
 }
 
-// BenchmarkSearch measures Search on an index built and trained once in
-// setup, cycling through precomputed queries by iteration index.
+// BenchmarkSearch measures Search on an index that is built and trained once
+// in setup. It cycles through precomputed queries by iteration index.
 func BenchmarkSearch(b *testing.B) {
 	data := testutil.ClusteredData(benchSeed, benchN, benchDim, benchClusters)
 	idx, err := pqivf.New(benchDim)

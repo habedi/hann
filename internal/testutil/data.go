@@ -13,8 +13,8 @@ import (
 
 // ClusteredData returns n vectors of the given dimension drawn from the given
 // number of Gaussian clusters, keyed by ids 0 through n-1. The same seed
-// returns the same data. Clustered data is used instead of uniform data
-// because uniform random points in high dimensions have nearly equidistant
+// returns the same data. Clustered data is used instead of uniform data.
+// Uniform random points in high dimensions have nearly equidistant
 // neighbors, which makes recall measurements meaningless.
 func ClusteredData(seed int64, n, dim, clusters int) map[int][]float32 {
 	rng := rand.New(rand.NewSource(seed))
@@ -61,7 +61,7 @@ func Queries(seed int64, data map[int][]float32, q int) [][]float32 {
 }
 
 // BruteForceKNN returns the ids of the k nearest data points to the query
-// under the given metric, breaking distance ties by id, so the result is
+// under the given metric. Distance ties are broken by id, so the result is
 // deterministic.
 func BruteForceKNN(query []float32, data map[int][]float32, k int, metric core.Metric) ([]int, error) {
 	type scored struct {
@@ -110,17 +110,18 @@ func Recall(got []core.Neighbor, want []int) float64 {
 	return float64(hits) / float64(len(want))
 }
 
-// CopyVector returns a copy of the vector, so index operations that store or
-// normalize their argument in place cannot alias test-owned data.
+// CopyVector returns a copy of the vector. Index operations that store or
+// normalize their argument in place then cannot share memory with test-owned
+// data.
 func CopyVector(vec []float32) []float32 {
 	out := make([]float32, len(vec))
 	copy(out, vec)
 	return out
 }
 
-// almostEqual reports whether two distances agree within a relative tolerance,
-// which is needed because the SIMD variants and the fallback do not produce
-// bit-identical results.
+// almostEqual reports whether two distances agree within a relative
+// tolerance. The tolerance is needed because the SIMD variants and the
+// fallback do not produce bit-identical results.
 func almostEqual(a, b float64) bool {
 	diff := math.Abs(a - b)
 	if diff < 1e-4 {

@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	// Using PQIVF index with GIST dataset
+	// Run the PQIVF index on the GIST dataset.
 	PQIVFIndexGIST()
 }
 

@@ -11,10 +11,8 @@ import (
 	"unsafe"
 )
 
-// DistanceFunc computes the distance between two vectors.
-// a: the first vector.
-// b: the second vector.
-// Returns the computed distance as a float64 and an error if validation fails.
+// DistanceFunc computes the distance between the two vectors a and b.
+// It returns the distance as a float64 and an error if validation fails.
 type DistanceFunc func(a, b []float32) (float64, error)
 
 // euclidean computes the Euclidean (L2) distance between two vectors.
@@ -69,9 +67,9 @@ func manhattan(a, b []float32) (float64, error) {
 }
 
 // The batch wrappers pass one query and a flat buffer of candidate vectors
-// to the C batch kernels. The Metric batch methods validate the lengths
-// before calling them, so every slice is non-empty here and the C side never
-// reads past the counts it is given.
+// to the C batch kernels. The Metric batch methods check the lengths before
+// calling them. So every slice here is non-empty, and the C side never reads
+// past the counts it is given.
 
 // euclideanBatch computes the Euclidean distance from the query to each row
 // of the flat buffer.

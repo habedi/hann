@@ -16,9 +16,10 @@ const (
 	benchQueries  = 100
 )
 
-// BenchmarkBuild measures constructing an index, bulk-adding the full dataset,
-// and one search, so it reports whole-build time. The search is included
-// because the tree is built lazily on the first search after a mutation.
+// BenchmarkBuild measures constructing an index, bulk-adding the full
+// dataset, and one search. The bulk add triggers the tree build, so the
+// loop reports whole-build time. The search runs against the finished
+// tree.
 func BenchmarkBuild(b *testing.B) {
 	data := testutil.ClusteredData(benchSeed, benchN, benchDim, benchClusters)
 	query := testutil.Queries(benchSeed+1, data, 1)[0]

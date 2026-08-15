@@ -35,7 +35,8 @@ func FormatGroundTruth(neighbors []int, distances []float64, k, maxResults int) 
 	return s
 }
 
-// RecallAtK computes Recall@k as the fraction of the top k ground-truth items that appear in the top k predictions.
+// RecallAtK computes Recall@k. It is the fraction of the top k ground-truth
+// items that appear in the top k predictions.
 func RecallAtK(predicted []core.Neighbor, groundTruth []int, k int) float64 {
 	if k <= 0 || len(groundTruth) == 0 {
 		return 0.0

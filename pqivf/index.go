@@ -1,3 +1,5 @@
+// Package pqivf implements the PQIVF index: coarse clustering into an
+// inverted file, with product quantization inside each cluster.
 package pqivf
 
 import (
@@ -14,7 +16,8 @@ import (
 	"github.com/habedi/hann/core"
 )
 
-// seededRand is a global random number generator for random operations (e.g. during k-means).
+// seededRand is a global random number generator for random operations,
+// such as k-means seeding.
 var seededRand = rand.New(rand.NewSource(core.GetSeed()))
 var seededRandMu sync.Mutex
 
@@ -26,9 +29,9 @@ type pqEntry struct {
 	Cluster int       // coarse cluster assignment
 }
 
-// Index is the PQIVF index. The index is Euclidean-only, because the k-means
-// centroid averaging it uses for coarse clustering and product quantization
-// assumes the Euclidean metric.
+// Index is the PQIVF index. It supports only the Euclidean metric. Coarse
+// clustering and product quantization average vectors into k-means
+// centroids, and that averaging assumes the Euclidean metric.
 type Index struct {
 	mu                      sync.RWMutex      // mutex for concurrent access
 	fallbackSearches        atomic.Int64      // searches that fell back to a brute-force scan
@@ -57,9 +60,9 @@ func WithCoarseK(coarseK int) Option {
 	return func(pq *Index) { pq.coarseK = coarseK }
 }
 
-// WithNumSubquantizers sets the number of subquantizers the vectors are split
-// into. The dimension must be divisible by this value. The default is the
-// largest of 8, 4, 2, and 1 that divides the dimension.
+// WithNumSubquantizers sets the number of subquantizers. Each vector is
+// split into that many parts. The dimension must be divisible by this value.
+// The default is the largest of 8, 4, 2, and 1 that divides the dimension.
 func WithNumSubquantizers(numSubquantizers int) Option {
 	return func(pq *Index) { pq.numSubquantizers = numSubquantizers }
 }
@@ -82,9 +85,9 @@ func WithCandidateClusters(n int) Option {
 	return func(pq *Index) { pq.numCandidateClusters = n }
 }
 
-// WithBruteForceFallback sets whether a search that gathers fewer than k
-// candidates from the probed clusters may fall back to a brute-force scan
-// over all entries. The fallback is on by default.
+// WithBruteForceFallback sets whether a search may fall back to a
+// brute-force scan over all entries. The fallback runs when the probed
+// clusters give fewer than k candidates. The fallback is on by default.
 func WithBruteForceFallback(allow bool) Option {
 	return func(pq *Index) { pq.allowBruteForceFallback = allow }
 }
@@ -94,10 +97,11 @@ func WithBruteForceFallback(allow bool) Option {
 // assumes it. Defaults: 16 coarse clusters, a PQ codebook size of 16, 10
 // k-means iterations, 3 candidate clusters probed per search, the brute-force
 // fallback on, and the number of subquantizers set to the largest of 8, 4, 2,
-// and 1 that divides the dimension. It returns an error when the dimension,
-// the number of coarse clusters, the PQ codebook size, or the number of
-// k-means iterations is not positive, or when the dimension is not divisible
-// by the number of subquantizers.
+// and 1 that divides the dimension. New returns an error in two cases. The
+// first case is a non-positive value for the dimension, the number of coarse
+// clusters, the PQ codebook size, or the number of k-means iterations. The
+// second case is a dimension that is not divisible by the number of
+// subquantizers.
 func New(dimension int, opts ...Option) (*Index, error) {
 	if dimension <= 0 {
 		return nil, fmt.Errorf("dimension (%d) must be positive", dimension)
@@ -151,31 +155,31 @@ func defaultNumSubquantizers(dimension int) int {
 	return 1
 }
 
-// nearestCentroid finds the closest coarse centroid to the vector and returns
-// its index and its rank distance. The distance is only used for ordering, so
-// it stays in rank space.
-func (pq *Index) nearestCentroid(vector []float32) (int, float64, error) {
+// nearestCentroid returns the index of the closest coarse centroid to the
+// vector. The comparison uses rank distances, which order centroids exactly
+// like true distances.
+func (pq *Index) nearestCentroid(vector []float32) (int, error) {
 	if len(pq.coarseCentroids) == 0 {
-		return 0, 0, fmt.Errorf("no coarse centroids available")
+		return 0, fmt.Errorf("no coarse centroids available")
 	}
 	best := -1
 	bestDist := math.MaxFloat64
 	for i, centroid := range pq.coarseCentroids {
 		d, err := pq.metric.Rank(vector, centroid)
 		if err != nil {
-			return 0, 0, err
+			return 0, err
 		}
 		if d < bestDist {
 			bestDist = d
 			best = i
 		}
 	}
-	return best, bestDist, nil
+	return best, nil
 }
 
 // nearestCentroids returns a sorted slice of clusters with their rank
-// distances to the vector. The distances are only used for ordering, so they
-// stay in rank space.
+// distances to the vector. The distances are only used for ordering, so
+// they stay in rank space.
 func (pq *Index) nearestCentroids(vector []float32) ([]struct {
 	cluster int
 	dist    float64
@@ -200,9 +204,9 @@ func (pq *Index) nearestCentroids(vector []float32) ([]struct {
 	return res, nil
 }
 
-// Add inserts a new vector with an id. On a trained index the vector is
-// assigned to its nearest coarse cluster immediately and the index stays
-// searchable; on an untrained index the vector goes into the temporary
+// Add inserts a new vector with an id. On a trained index the vector goes
+// into its nearest coarse cluster right away, and the index stays
+// searchable. On an untrained index the vector waits in the temporary
 // holding area until Train is called.
 func (pq *Index) Add(id int, vector []float32) error {
 	pq.mu.Lock()
@@ -210,9 +214,9 @@ func (pq *Index) Add(id int, vector []float32) error {
 	return pq.addLocked(id, vector)
 }
 
-// addLocked inserts a new vector with an id, assigning it to a cluster when
-// the index is trained and pending it otherwise. The caller must hold the
-// mutex.
+// addLocked inserts a new vector with an id. When the index is trained, the
+// vector is assigned to a cluster. Otherwise it goes into the pending list.
+// The caller must hold the mutex.
 func (pq *Index) addLocked(id int, vector []float32) error {
 	if err := pq.validateVector(vector); err != nil {
 		return err
@@ -233,12 +237,12 @@ func (pq *Index) addLocked(id int, vector []float32) error {
 
 // assignLocked places a vector into the trained index structure: the nearest
 // coarse cluster, PQ codes when the codebooks allow encoding, and the id and
-// count bookkeeping. Search tolerates entries without codes by ranking them
-// with the exact vector, so a failed encoding stores the entry without codes
-// rather than failing the insert. The caller must hold the mutex, and the
-// index must be trained.
+// count bookkeeping. Search accepts entries without codes and ranks them
+// with the exact vector. A failed encoding therefore stores the entry
+// without codes instead of failing the insert. The caller must hold the
+// mutex, and the index must be trained.
 func (pq *Index) assignLocked(id int, vector []float32) error {
-	cluster, _, err := pq.nearestCentroid(vector)
+	cluster, err := pq.nearestCentroid(vector)
 	if err != nil {
 		return err
 	}
@@ -254,10 +258,10 @@ func (pq *Index) assignLocked(id int, vector []float32) error {
 	return nil
 }
 
-// BulkAdd inserts multiple vectors, following the same rule as Add: on a
-// trained index each vector is assigned to its nearest coarse cluster
-// immediately, and on an untrained index the vectors go into the temporary
-// holding area until Train is called.
+// BulkAdd inserts multiple vectors. It follows the same rule as Add. On a
+// trained index each vector goes into its nearest coarse cluster right away.
+// On an untrained index the vectors wait in the temporary holding area until
+// Train is called.
 func (pq *Index) BulkAdd(vectors map[int][]float32) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
@@ -300,11 +304,11 @@ func (pq *Index) Delete(id int) error {
 
 // deleteLocked removes an entry by its id, from either pending vectors or
 // clustered data. A delete does not untrain the index and does not move the
-// coarse centroids: the stored PQ codes are residuals against the centroid
-// they were encoded with, so recomputing a centroid from the surviving
-// entries would silently degrade every code in the cluster. The centroids
-// stay fixed between Train calls, and Train is the refresh. The caller must
-// hold the mutex.
+// coarse centroids. The stored PQ codes are residuals against the centroid
+// they were encoded with. Recomputing a centroid from the surviving entries
+// would silently degrade every code in the cluster. So the centroids stay
+// fixed between Train calls, and Train is the refresh. The caller must hold
+// the mutex.
 func (pq *Index) deleteLocked(id int) error {
 	// If the vector is in the pending list, remove it from there.
 	if _, exists := pq.pendingVectors[id]; exists {
@@ -340,14 +344,16 @@ func (pq *Index) deleteLocked(id int) error {
 }
 
 // BulkDelete removes multiple entries from the index. Like Delete, it keeps
-// the index trained and leaves the coarse centroids fixed; see deleteLocked
+// the index trained and leaves the coarse centroids fixed. See deleteLocked
 // for the reasoning.
 func (pq *Index) BulkDelete(ids []int) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
-	sort.Ints(ids)
-	for _, id := range ids {
+	// Sort a copy, so the caller's slice keeps its order.
+	sorted := append([]int(nil), ids...)
+	sort.Ints(sorted)
+	for _, id := range sorted {
 		// If in pending, just delete.
 		if _, exists := pq.pendingVectors[id]; exists {
 			delete(pq.pendingVectors, id)
@@ -388,10 +394,10 @@ func (pq *Index) validateVector(vector []float32) error {
 	return nil
 }
 
-// Update removes and then re-adds an entry with an updated vector as one
-// critical section, so no other operation can observe or interleave with
-// the intermediate deleted state. The new vector is validated before the
-// delete, so a failed update leaves the index unchanged.
+// Update removes an entry and re-adds it with a new vector. Both steps run
+// in one critical section. No other operation can see the entry in its
+// deleted state in between. The new vector is validated before the delete,
+// so a failed update leaves the index unchanged.
 func (pq *Index) Update(id int, vector []float32) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
@@ -405,10 +411,10 @@ func (pq *Index) Update(id int, vector []float32) error {
 	return pq.addLocked(id, vector)
 }
 
-// BulkUpdate updates multiple entries with new vectors as one critical
-// section, so no other operation can interleave with the batch.
-// All vectors are validated before any entry is touched, so a
-// dimension mismatch leaves the index unchanged.
+// BulkUpdate updates multiple entries with new vectors. The whole batch runs
+// in one critical section, so no other operation can run in the middle of
+// it. All vectors are validated before any entry is touched, so a dimension
+// mismatch leaves the index unchanged.
 func (pq *Index) BulkUpdate(updates map[int][]float32) error {
 	var keys []int
 	for id := range updates {
@@ -437,10 +443,10 @@ func (pq *Index) BulkUpdate(updates map[int][]float32) error {
 }
 
 // Train builds the index structure, including coarse centroids and PQ
-// codebooks. It is both the initial training step and an optional refresh:
-// it re-clusters every vector, clustered and pending, so it can be re-run
-// to restore clustering quality after many mutations. Once an index has
-// been trained, later adds, deletes, and updates keep it searchable.
+// codebooks. It is both the initial training step and an optional refresh.
+// It re-clusters every vector, clustered and pending. Running it again
+// restores clustering quality after many mutations. Once an index has been
+// trained, later adds, deletes, and updates keep it searchable.
 func (pq *Index) Train() error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
@@ -477,7 +483,7 @@ func (pq *Index) Train() error {
 	pq.idToCluster = make(map[int]int)
 	pq.clusterCounts = make(map[int]int)
 	for id, vector := range allVectorsByID {
-		cluster, _, err := pq.nearestCentroid(vector)
+		cluster, err := pq.nearestCentroid(vector)
 		if err != nil {
 			return err
 		}
@@ -490,7 +496,7 @@ func (pq *Index) Train() error {
 	// Clear the pending vectors list as they are now clustered.
 	pq.pendingVectors = make(map[int][]float32)
 
-	// If there's no data, training is trivially complete.
+	// If there is no data, training is already complete.
 	if len(pq.invertedLists) == 0 {
 		pq.trained = true
 		return nil
@@ -743,8 +749,8 @@ func (pq *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 
 	var results []core.Neighbor
 	// Compute rank distances for each candidate entry. Rank distances order
-	// candidates exactly like true distances, so the sort below is unchanged,
-	// and only the final k results are converted to true distances.
+	// candidates exactly like true distances, so the sort below works on
+	// them as is. Only the final k results are converted to true distances.
 	for _, entry := range entries {
 		var d float64
 		var distErr error
@@ -760,7 +766,7 @@ func (pq *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 					// Fallback to exact distance if vector addition fails
 					d, distErr = pq.metric.Rank(query, entry.Vector)
 				} else {
-					// Main path: use approximate distance
+					// The main path uses the approximate distance.
 					d, distErr = pq.metric.Rank(query, approxVec)
 				}
 			}
@@ -791,7 +797,8 @@ func (pq *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	return results, nil
 }
 
-// Stats returns statistics about the index (e.g. total number of entries).
+// Stats returns statistics about the index, such as the total number of
+// entries.
 func (pq *Index) Stats() core.IndexStats {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
@@ -822,11 +829,12 @@ type serializedPQIVF struct {
 	Trained                 bool
 	PendingVectors          map[int][]float32
 	FormatVersion           int
+	NumCandidateClusters    int
 }
 
 // formatVersion is the on-disk format version written by GobEncode. Files
-// written before the field existed decode it as zero and are accepted; files
-// written by a newer version of the format are rejected on load.
+// written before the field existed decode it as zero, and they are accepted.
+// Files written by a newer version of the format are rejected on load.
 const formatVersion = 1
 
 // GobEncode serializes the index into bytes using gob.
@@ -847,6 +855,7 @@ func (pq *Index) GobEncode() ([]byte, error) {
 		Trained:                 pq.trained,
 		PendingVectors:          pq.pendingVectors,
 		FormatVersion:           formatVersion,
+		NumCandidateClusters:    pq.numCandidateClusters,
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -868,11 +877,32 @@ func (pq *Index) GobDecode(data []byte) error {
 		return fmt.Errorf("index file has format version %d, but this build supports up to %d",
 			ser.FormatVersion, formatVersion)
 	}
+	// A corrupt or crafted file can carry parameters New would reject, and
+	// some of them cause a panic in a later operation, such as a division
+	// by a zero subquantizer count. Real files always carry valid values,
+	// so an invalid one is an error, not a fallback.
+	if ser.Dimension <= 0 {
+		return fmt.Errorf("serialized index has invalid dimension %d", ser.Dimension)
+	}
+	if ser.NumSubquantizers <= 0 || ser.Dimension%ser.NumSubquantizers != 0 {
+		return fmt.Errorf("serialized index has invalid subquantizer count %d for dimension %d",
+			ser.NumSubquantizers, ser.Dimension)
+	}
+	if ser.CoarseK <= 0 || ser.PqK <= 0 || ser.KMeansIters <= 0 {
+		return fmt.Errorf("serialized index has invalid training parameters: coarseK %d, pqK %d, kMeansIters %d",
+			ser.CoarseK, ser.PqK, ser.KMeansIters)
+	}
 	pq.dimension = ser.Dimension
 	pq.coarseK = ser.CoarseK
 	pq.coarseCentroids = ser.CoarseCentroids
 	pq.clusterCounts = ser.ClusterCounts
+	if pq.clusterCounts == nil {
+		pq.clusterCounts = make(map[int]int)
+	}
 	pq.invertedLists = ser.InvertedLists
+	if pq.invertedLists == nil {
+		pq.invertedLists = make(map[int][]pqEntry)
+	}
 	pq.numSubquantizers = ser.NumSubquantizers
 	pq.codebooks = ser.Codebooks
 	pq.pqK = ser.PqK
@@ -882,6 +912,14 @@ func (pq *Index) GobDecode(data []byte) error {
 	pq.pendingVectors = ser.PendingVectors
 	if pq.pendingVectors == nil {
 		pq.pendingVectors = make(map[int][]float32)
+	}
+	// Files written before the field existed decode it as zero. Keep the
+	// configured value in that case, and fall back to the default of 3 when
+	// there is none to keep.
+	if ser.NumCandidateClusters > 0 {
+		pq.numCandidateClusters = ser.NumCandidateClusters
+	} else if pq.numCandidateClusters <= 0 {
+		pq.numCandidateClusters = 3
 	}
 	pq.idToCluster = make(map[int]int)
 	// Rebuild idToCluster mapping from the inverted lists.
@@ -896,7 +934,7 @@ func (pq *Index) GobDecode(data []byte) error {
 
 // Save writes the index to the given writer using gob encoding.
 // Encoding goes through GobEncode, which takes the read lock, so Save
-// must not take the lock itself; a recursive read lock can deadlock
+// must not take the lock itself. Taking the read lock twice can deadlock
 // when a writer queues between the two acquisitions.
 func (pq *Index) Save(w io.Writer) error {
 	enc := gob.NewEncoder(w)

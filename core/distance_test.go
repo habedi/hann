@@ -86,7 +86,6 @@ func TestDistanceFunctions(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt // capture range variable
 		t.Run(tt.name, func(t *testing.T) {
 			euclid, err := Euclidean.Distance(tt.a, tt.b)
 			if err != nil {
@@ -153,9 +152,10 @@ func TestDistanceFunctionsErrors(t *testing.T) {
 	}
 }
 
-// referenceDistance computes a distance in float64 arithmetic, independently
-// of the C implementations, for differential testing. The zero-norm and
-// clamping behavior mirrors the documented behavior of the cosine kernel.
+// referenceDistance computes a distance in float64 arithmetic for
+// differential testing. It does not depend on the C implementations. Its
+// zero-norm and clamping behavior matches the documented behavior of the
+// cosine kernel.
 func referenceDistance(name string, a, b []float32) float64 {
 	switch name {
 	case "euclidean":
@@ -195,10 +195,11 @@ func referenceDistance(name string, a, b []float32) float64 {
 	panic("unknown distance name " + name)
 }
 
-// TestDistanceDifferentialAgainstReference compares every distance function,
-// through whichever SIMD variant is installed on this machine, against an
-// independent float64 reference over random vectors. The dimensions sweep the
-// vector-lane boundaries so the tail loops of the SIMD variants are covered.
+// TestDistanceDifferentialAgainstReference compares every distance function
+// against an independent float64 reference over random vectors. Each
+// function runs through whichever SIMD variant is installed on this machine.
+// The dimensions sweep the vector-lane boundaries, so the tail loops of the
+// SIMD variants are covered.
 func TestDistanceDifferentialAgainstReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	dims := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 17, 25, 31, 32, 33, 128, 200, 784}

@@ -9,13 +9,13 @@ import (
 )
 
 // RunConcurrentOps exercises an index from many goroutines at once under the
-// race detector. Each worker owns a disjoint id range, so operations never
-// conflict logically and the final state is checkable, while the lock paths
-// for add, update, delete, search, and save all contend. Search errors are
-// ignored, because some indexes reject searches in transient states; the
-// runner exists to surface data races and deadlocks, and it fails the test if
-// the workers do not finish within a timeout. The final count check catches
-// lost updates.
+// race detector. Each worker owns a disjoint id range. Operations therefore
+// never conflict logically, and the final state is checkable, while the lock
+// paths for add, update, delete, search, and save all contend. Search errors
+// are ignored, because some indexes reject searches in transient states. The
+// runner exists to surface data races and deadlocks, and it fails the test
+// if the workers do not finish within a timeout. The final count check
+// catches lost updates.
 func RunConcurrentOps(t *testing.T, f Factory, dim, workers, opsPerWorker int) {
 	t.Helper()
 	idx := f.New()
@@ -74,8 +74,9 @@ func RunConcurrentOps(t *testing.T, f Factory, dim, workers, opsPerWorker int) {
 					}
 					delete(present, id)
 				case action == 7:
-					// Save contends the read path against the writers, which
-					// is the shape that deadlocked before the lock fixes.
+					// Save makes the read path contend with the writers.
+					// That is the shape that deadlocked before the lock
+					// fixes.
 					if err := idx.Save(io.Discard); err != nil {
 						errs <- err
 						return
@@ -85,7 +86,7 @@ func RunConcurrentOps(t *testing.T, f Factory, dim, workers, opsPerWorker int) {
 					for d := range query {
 						query[d] = rng.Float32()*10 - 5
 					}
-					// Search errors in transient states are tolerated; races
+					// Search errors in transient states are tolerated. Races
 					// and deadlocks are what this runner is for.
 					_, _ = idx.Search(query, 5)
 				}
