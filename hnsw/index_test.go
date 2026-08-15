@@ -1418,3 +1418,56 @@ func TestHNSWLevelFromUnit(t *testing.T) {
 		}
 	}
 }
+
+// TestHNSWIndex_BulkAddGraphInvariants bulk-adds thousands of vectors, then
+// audits the structural invariants of the graph: link counts within M, no
+// duplicate or dangling links, a reverse record behind every link, and a
+// valid entry point. The audit repeats after deletes and updates on the
+// bulk-built graph, over several rounds so the insertion interleavings
+// vary.
+func TestHNSWIndex_BulkAddGraphInvariants(t *testing.T) {
+	rng := rand.New(rand.NewSource(21))
+	for round := 0; round < 4; round++ {
+		dim := 16
+		idx := newTestIndex(t, dim, hnsw.WithM(8), hnsw.WithEf(40), hnsw.WithEfConstruction(60))
+		vectors := make(map[int][]float32, 3000)
+		for id := 0; id < 3000; id++ {
+			vec := make([]float32, dim)
+			for i := range vec {
+				vec[i] = float32(rng.NormFloat64())
+			}
+			vectors[id] = vec
+		}
+		if err := idx.BulkAdd(vectors); err != nil {
+			t.Fatalf("round %d: BulkAdd failed: %v", round, err)
+		}
+		for _, p := range hnsw.AuditGraph(idx) {
+			t.Errorf("round %d after BulkAdd: %s", round, p)
+		}
+		if t.Failed() {
+			return
+		}
+
+		var toDelete []int
+		for id := 0; id < 3000; id += 3 {
+			toDelete = append(toDelete, id)
+		}
+		if err := idx.BulkDelete(toDelete); err != nil {
+			t.Fatalf("round %d: BulkDelete failed: %v", round, err)
+		}
+		updates := make(map[int][]float32, 500)
+		for id := 1; id < 1500; id += 3 {
+			vec := make([]float32, dim)
+			for i := range vec {
+				vec[i] = float32(rng.NormFloat64())
+			}
+			updates[id] = vec
+		}
+		if err := idx.BulkUpdate(updates); err != nil {
+			t.Fatalf("round %d: BulkUpdate failed: %v", round, err)
+		}
+		for _, p := range hnsw.AuditGraph(idx) {
+			t.Errorf("round %d after delete and update: %s", round, p)
+		}
+	}
+}

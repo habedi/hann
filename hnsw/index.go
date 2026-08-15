@@ -135,7 +135,9 @@ func (h *Index) linkLen(n *node, level int, par *bulkState) int {
 // addEdge records the directed edge from one node to another, on both sides
 // of the bookkeeping. The parallel path takes one node lock at a time, so
 // no inserter ever holds two locks, and it skips an edge that a concurrent
-// inserter already created.
+// inserter already created. A trim that interleaves between the two halves
+// can leave a reverse record without a matching link. That is tolerated:
+// every reader of reverse links treats a record without a link as a no-op.
 func (h *Index) addEdge(from, to *node, level int, par *bulkState) {
 	if par == nil {
 		from.Links[level] = append(from.Links[level], to)
@@ -702,6 +704,15 @@ func (h *Index) insertNode(n *node, searchEf int, par *bulkState) error {
 				if err := trimNeighborLinks(neighbor, L, h.m, h.metric.Rank, par); err != nil {
 					return err
 				}
+			}
+		}
+		// The new node's own list needs the same cap check: concurrent
+		// inserters append backlinks to it while its selected edges are
+		// wired, so the unchecked appends above can push it past M. With no
+		// concurrency the selected edges alone never exceed M.
+		if h.linkLen(n, L, par) > h.m {
+			if err := trimNeighborLinks(n, L, h.m, h.metric.Rank, par); err != nil {
+				return err
 			}
 		}
 		// Move the current pointer for the next level.
