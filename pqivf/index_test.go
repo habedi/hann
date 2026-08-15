@@ -835,3 +835,49 @@ func TestPQIVF_FallbackSearchCounter(t *testing.T) {
 		t.Fatalf("expected at least 1 fallback search, got %d", got)
 	}
 }
+
+// TestPQIVF_DeleteAllThenSearch empties a trained index through Delete and
+// checks that a search returns no results and no error, and that a
+// subsequent Add makes the index searchable again.
+func TestPQIVF_DeleteAllThenSearch(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim := 4
+	idx := newIndex(t, dim, 2, 2, 2, 5)
+	vectors := map[int][]float32{
+		1: {1, 0, 0, 0},
+		2: {0, 1, 0, 0},
+		3: {0, 0, 1, 0},
+		4: {0, 0, 0, 1},
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+	for id := range vectors {
+		if err := idx.Delete(id); err != nil {
+			t.Fatalf("Delete(%d) failed: %v", id, err)
+		}
+	}
+	if got := idx.Stats().Count; got != 0 {
+		t.Fatalf("expected count 0 after deleting everything, got %d", got)
+	}
+	neighbors, err := idx.Search([]float32{1, 0, 0, 0}, 2)
+	if err != nil {
+		t.Fatalf("Search on the emptied index failed: %v", err)
+	}
+	if len(neighbors) != 0 {
+		t.Fatalf("expected no results from the emptied index, got %v", neighbors)
+	}
+	if err := idx.Add(5, []float32{1, 1, 0, 0}); err != nil {
+		t.Fatalf("Add after emptying failed: %v", err)
+	}
+	neighbors, err = idx.Search([]float32{1, 1, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("Search after the re-add failed: %v", err)
+	}
+	if len(neighbors) != 1 || neighbors[0].ID != 5 {
+		t.Errorf("expected id 5 after the re-add, got %v", neighbors)
+	}
+}

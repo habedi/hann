@@ -78,3 +78,19 @@ func TestPQIVF_DifferentialBulkSequential(t *testing.T) {
 	}
 	testutil.RunBulkSequentialDifferential(t, factory, 16, 300, 10)
 }
+
+// TestPQIVF_DifferentialUpdate compares an index whose vectors were moved
+// through Update and BulkUpdate with one built directly from the final data.
+// Distances are quantized, so the check covers the id bookkeeping: every
+// surviving id must be returned exactly once by a complete search.
+func TestPQIVF_DifferentialUpdate(t *testing.T) {
+	testutil.RunUpdateDifferential(t, pqivfFactory(t), 16, 300, 10)
+}
+
+// TestPQIVF_DifferentialSaveLoad compares complete searches before and after
+// a save and load round-trip. The codebooks travel with the file, so the
+// loaded index must reproduce the original distances rank by rank even
+// though they are quantized.
+func TestPQIVF_DifferentialSaveLoad(t *testing.T) {
+	testutil.RunSaveLoadDifferential(t, pqivfFactory(t), 16, 300, 10)
+}

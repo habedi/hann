@@ -101,3 +101,15 @@ func TestRPTIndex_DifferentialExact(t *testing.T) {
 func TestRPTIndex_DifferentialBulkSequential(t *testing.T) {
 	testutil.RunBulkSequentialDifferential(t, rptFactory(t, 16), 16, 300, 10)
 }
+
+// TestRPTIndex_DifferentialUpdate compares an index whose vectors were moved
+// through Update and BulkUpdate with one built directly from the final data.
+func TestRPTIndex_DifferentialUpdate(t *testing.T) {
+	testutil.RunUpdateDifferential(t, rptFactory(t, 16), 16, 300, 10)
+}
+
+// TestRPTIndex_DifferentialSaveLoad compares complete searches before and
+// after a save and load round-trip of an index that has seen deletions.
+func TestRPTIndex_DifferentialSaveLoad(t *testing.T) {
+	testutil.RunSaveLoadDifferential(t, rptFactory(t, 16), 16, 300, 10)
+}

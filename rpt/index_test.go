@@ -2,7 +2,10 @@ package rpt_test
 
 import (
 	"bytes"
+	"encoding/gob"
+	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/habedi/hann/core"
@@ -592,5 +595,130 @@ func TestRPTIndex_FallbackSearchCounter(t *testing.T) {
 	}
 	if got := idx.Stats().FallbackSearches; got < 1 {
 		t.Fatalf("expected at least 1 fallback search, got %d", got)
+	}
+}
+
+// TestRPTIndex_DuplicateVectors builds a tree from many copies of the same
+// vector. Every projection value is equal on such a set, so no threshold can
+// separate the points and the tree build must fall back to a positional
+// split instead of recursing forever. Searches must still work.
+func TestRPTIndex_DuplicateVectors(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim := 8
+	idx := mustNew(t, dim)
+	same := []float32{1, 2, 3, 4, 5, 6, 7, 8}
+	vectors := make(map[int][]float32, 200)
+	for id := 0; id < 200; id++ {
+		vectors[id] = testutil.CopyVector(same)
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	neighbors, err := idx.Search(testutil.CopyVector(same), 5)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(neighbors) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(neighbors))
+	}
+	for _, nb := range neighbors {
+		if nb.Distance > 1e-6 {
+			t.Errorf("id %d: expected distance 0 for a duplicate, got %v", nb.ID, nb.Distance)
+		}
+	}
+}
+
+// TestRPTIndex_MetricErrorPropagation checks that a distance failure during a
+// search is returned to the caller instead of being swallowed by the
+// parallel distance workers.
+func TestRPTIndex_MetricErrorPropagation(t *testing.T) {
+	failNow := false
+	metric := core.NewMetric("rpt_flaky_test_metric", func(a, b []float32) (float64, error) {
+		if failNow {
+			return 0, fmt.Errorf("distance failure injected by the test")
+		}
+		return core.Euclidean.Distance(a, b)
+	}, false)
+	idx := mustNew(t, 4, rpt.WithMetric(metric))
+	for id := 0; id < 10; id++ {
+		if err := idx.Add(id, []float32{float32(id), 0, 0, 0}); err != nil {
+			t.Fatalf("Add(%d) failed: %v", id, err)
+		}
+	}
+	failNow = true
+	if _, err := idx.Search([]float32{1, 0, 0, 0}, 3); err == nil {
+		t.Error("expected error from Search with a failing metric, got none")
+	}
+}
+
+// TestRPTIndex_FallbackOffShortfall checks that a search that gathers fewer
+// candidates than k with the brute-force fallback disabled returns the
+// candidates it has, sorted, instead of an error or a full scan.
+func TestRPTIndex_FallbackOffShortfall(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	dim := 8
+	idx := mustNew(t, dim,
+		rpt.WithLeafCapacity(5),
+		rpt.WithProbeMargin(0),
+		rpt.WithBruteForceFallback(false))
+	data := testutil.ClusteredData(9, 100, dim, 4)
+	if err := idx.BulkAdd(data); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	neighbors, err := idx.Search(testutil.CopyVector(data[0]), 50)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(neighbors) == 0 || len(neighbors) >= 50 {
+		t.Fatalf("expected a partial result between 1 and 49 neighbors, got %d", len(neighbors))
+	}
+	for i := 1; i < len(neighbors); i++ {
+		if neighbors[i].Distance < neighbors[i-1].Distance {
+			t.Fatalf("results are not sorted at rank %d", i)
+		}
+	}
+	if got := idx.Stats().FallbackSearches; got != 0 {
+		t.Errorf("expected no fallback searches with the fallback disabled, got %d", got)
+	}
+}
+
+// TestRPTIndex_GobDecodeErrors checks that garbage bytes, a newer format
+// version, and an unknown metric name are rejected by GobDecode.
+func TestRPTIndex_GobDecodeErrors(t *testing.T) {
+	idx := mustNew(t, 4)
+	if err := idx.GobDecode([]byte("not a gob stream")); err == nil {
+		t.Error("expected error decoding garbage bytes, got none")
+	}
+
+	// A file with a newer format version must be rejected. The gob decoder
+	// matches struct fields by name, so a minimal struct stands in for a
+	// future on-disk format.
+	future := struct{ FormatVersion int }{FormatVersion: 999}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(future); err != nil {
+		t.Fatalf("encoding the future format failed: %v", err)
+	}
+	err := idx.GobDecode(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected error for a newer format version, got none")
+	}
+	if !strings.Contains(err.Error(), "format version") {
+		t.Errorf("expected a format version error, got %v", err)
+	}
+
+	// An unknown metric name is an error when the decoding index has no
+	// metric of its own to keep, which is the case for a zero value.
+	unknown := struct{ DistanceName string }{DistanceName: "no_such_metric"}
+	buf.Reset()
+	if err := gob.NewEncoder(&buf).Encode(unknown); err != nil {
+		t.Fatalf("encoding the unknown metric failed: %v", err)
+	}
+	var zero rpt.Index
+	err = zero.GobDecode(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected error for an unknown metric on a zero-value index, got none")
+	}
+	if !strings.Contains(err.Error(), "unknown metric") {
+		t.Errorf("expected an unknown metric error, got %v", err)
 	}
 }
