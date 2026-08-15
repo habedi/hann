@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"math"
 	"math/rand"
 	"testing"
@@ -132,5 +133,33 @@ func TestDistanceBatchCustomMetric(t *testing.T) {
 		if !almostEqual(rankOut[i], want, 1e-9) {
 			t.Errorf("row %d: RankBatch %v, per-pair %v", i, rankOut[i], want)
 		}
+	}
+}
+
+// TestDistanceBatchLoopError checks that the per-pair fallback loop stops at
+// the first candidate whose distance computation fails and returns that error
+// to the caller, for both batch methods.
+func TestDistanceBatchLoopError(t *testing.T) {
+	failure := errors.New("distance failure injected by the test")
+	// The function fails on any candidate whose first element is negative, so
+	// the loop succeeds on the first row and fails on the second.
+	fn := func(a, b []float32) (float64, error) {
+		if b[0] < 0 {
+			return 0, failure
+		}
+		return float64(a[0]) + float64(b[0]), nil
+	}
+	m := NewMetric("failing_batch_test", fn, false)
+	query := []float32{1, 1}
+	flat := []float32{2, 2, -3, 3, 4, 4}
+	out := make([]float64, 3)
+	if err := m.DistanceBatch(query, flat, out); !errors.Is(err, failure) {
+		t.Errorf("DistanceBatch: expected the injected error, got %v", err)
+	}
+	if out[0] != 3 {
+		t.Errorf("DistanceBatch: expected the first row to be computed before the failure, got %v", out[0])
+	}
+	if err := m.RankBatch(query, flat, out); !errors.Is(err, failure) {
+		t.Errorf("RankBatch: expected the injected error, got %v", err)
 	}
 }

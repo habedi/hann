@@ -2,7 +2,9 @@ package pqivf_test
 
 import (
 	"bytes"
+	"encoding/gob"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/habedi/hann/core"
@@ -539,6 +541,251 @@ func TestPQIVF_DefaultNumSubquantizers(t *testing.T) {
 		if _, err := pqivf.New(dim); err != nil {
 			t.Errorf("New(%d) with default options failed: %v", dim, err)
 		}
+	}
+}
+
+// clusteredVectors returns three vectors around each of four well-separated
+// centers, keyed by ids 0 through 11, so coarse clustering with four clusters
+// cannot put every vector into one cluster.
+func clusteredVectors() map[int][]float32 {
+	vectors := make(map[int][]float32, 12)
+	id := 0
+	for _, base := range []float32{0, 100, 200, 300} {
+		for j := 0; j < 3; j++ {
+			off := base + float32(j)
+			vectors[id] = []float32{off, off, off, off}
+			id++
+		}
+	}
+	return vectors
+}
+
+// TestPQIVF_CandidateClustersAndFallbackOff checks the observable effect of
+// WithCandidateClusters and WithBruteForceFallback: with one probed cluster
+// and the fallback off, a k larger than one cluster's entries returns fewer
+// than k results, while the same search with the fallback on returns all of
+// them through the brute-force scan.
+func TestPQIVF_CandidateClustersAndFallbackOff(t *testing.T) {
+	vectors := clusteredVectors()
+	query := vectors[0]
+	k := len(vectors)
+
+	restricted, err := pqivf.New(4,
+		pqivf.WithCoarseK(4),
+		pqivf.WithNumSubquantizers(2),
+		pqivf.WithPQK(4),
+		pqivf.WithKMeansIters(10),
+		pqivf.WithCandidateClusters(1),
+		pqivf.WithBruteForceFallback(false),
+	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if err := restricted.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := restricted.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
+	got, err := restricted.Search(query, k)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(got) == 0 || len(got) >= k {
+		t.Errorf("expected between 1 and %d results from a single probed cluster, got %d", k-1, len(got))
+	}
+	found := false
+	for _, n := range got {
+		if n.ID == 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the exact match id 0 in the probed cluster, got %v", got)
+	}
+	if fallbacks := restricted.Stats().FallbackSearches; fallbacks != 0 {
+		t.Errorf("expected 0 fallback searches with the fallback off, got %d", fallbacks)
+	}
+
+	// The same configuration with the fallback on must fill the shortfall
+	// with a brute-force scan.
+	fallback, err := pqivf.New(4,
+		pqivf.WithCoarseK(4),
+		pqivf.WithNumSubquantizers(2),
+		pqivf.WithPQK(4),
+		pqivf.WithKMeansIters(10),
+		pqivf.WithCandidateClusters(1),
+	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if err := fallback.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := fallback.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+	got, err = fallback.Search(query, k)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(got) != k {
+		t.Errorf("expected %d results with the fallback on, got %d", k, len(got))
+	}
+	if fallbacks := fallback.Stats().FallbackSearches; fallbacks < 1 {
+		t.Errorf("expected at least 1 fallback search, got %d", fallbacks)
+	}
+}
+
+func TestPQIVF_BulkAddValidation(t *testing.T) {
+	idx := newIndex(t, 4, 2, 2, 4, 5)
+	if err := idx.Add(1, []float32{1, 1, 1, 1}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	// A row with the wrong dimension must fail.
+	if err := idx.BulkAdd(map[int][]float32{2: {1, 2}}); err == nil {
+		t.Error("expected error for a bulk row with the wrong dimension, got none")
+	}
+
+	// An id that is already pending must fail.
+	if err := idx.BulkAdd(map[int][]float32{1: {2, 2, 2, 2}}); err == nil {
+		t.Error("expected error for an id already in pending vectors, got none")
+	}
+	if got := idx.Stats().Count; got != 1 {
+		t.Errorf("expected count 1 after failed BulkAdd calls, got %d", got)
+	}
+
+	// An id that is already clustered must fail too.
+	if err := idx.BulkAdd(map[int][]float32{2: {5, 5, 5, 5}}); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+	if err := idx.BulkAdd(map[int][]float32{1: {2, 2, 2, 2}}); err == nil {
+		t.Error("expected error for an id already in a cluster, got none")
+	}
+	if got := idx.Stats().Count; got != 2 {
+		t.Errorf("expected count 2 after the failed BulkAdd on a trained index, got %d", got)
+	}
+}
+
+// TestPQIVF_BulkDeleteUnknownID checks that an unknown id is skipped and the
+// known ids are still removed.
+func TestPQIVF_BulkDeleteUnknownID(t *testing.T) {
+	idx := newIndex(t, 4, 2, 2, 4, 5)
+	if err := idx.BulkAdd(map[int][]float32{
+		1: {1, 1, 1, 1},
+		2: {2, 2, 2, 2},
+	}); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.BulkDelete([]int{99, 2}); err != nil {
+		t.Fatalf("BulkDelete with an unknown id failed: %v", err)
+	}
+	if got := idx.Stats().Count; got != 1 {
+		t.Fatalf("expected count 1 after BulkDelete, got %d", got)
+	}
+}
+
+// TestPQIVF_BulkUpdateUnknownID checks that updating an id that is not in the
+// index fails with an error.
+func TestPQIVF_BulkUpdateUnknownID(t *testing.T) {
+	idx := newIndex(t, 4, 2, 2, 4, 5)
+	if err := idx.Add(1, []float32{1, 1, 1, 1}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	if err := idx.BulkUpdate(map[int][]float32{99: {2, 2, 2, 2}}); err == nil {
+		t.Error("expected error updating an unknown id, got none")
+	}
+	if got := idx.Stats().Count; got != 1 {
+		t.Errorf("expected count 1 after the failed BulkUpdate, got %d", got)
+	}
+}
+
+// TestPQIVF_ZeroValueIndexRejectsAdd checks that an index that was not built
+// by New reports a clear error instead of accepting data.
+func TestPQIVF_ZeroValueIndexRejectsAdd(t *testing.T) {
+	var idx pqivf.Index
+	err := idx.Add(1, []float32{1, 2, 3, 4})
+	if err == nil {
+		t.Fatal("expected error adding to a zero-value index, got none")
+	}
+	if !strings.Contains(err.Error(), "zero-dimension") {
+		t.Errorf("expected a zero-dimension error, got %v", err)
+	}
+}
+
+// TestPQIVF_SearchWrongDimensionAfterTrain checks the query dimension check on
+// a trained index, where the untrained-index error cannot mask it.
+func TestPQIVF_SearchWrongDimensionAfterTrain(t *testing.T) {
+	idx := newIndex(t, 4, 2, 2, 4, 5)
+	if err := idx.BulkAdd(map[int][]float32{
+		1: {1, 1, 1, 1},
+		2: {2, 2, 2, 2},
+	}); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+	if _, err := idx.Search([]float32{1, 2}, 1); err == nil {
+		t.Error("expected error for a query with the wrong dimension, got none")
+	}
+}
+
+func TestPQIVF_GobDecodeErrors(t *testing.T) {
+	idx := newIndex(t, 4, 2, 2, 4, 5)
+
+	// Bytes that are not a gob stream must fail.
+	if err := idx.GobDecode([]byte("not a gob stream")); err == nil {
+		t.Error("expected error decoding garbage bytes, got none")
+	}
+
+	// A file with a newer format version must be rejected. The gob decoder
+	// matches struct fields by name, so a minimal struct stands in for a
+	// future on-disk format.
+	future := struct{ FormatVersion int }{FormatVersion: 999}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(future); err != nil {
+		t.Fatalf("encoding the future format failed: %v", err)
+	}
+	err := idx.GobDecode(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected error for a newer format version, got none")
+	}
+	if !strings.Contains(err.Error(), "format version") {
+		t.Errorf("expected a format version error, got %v", err)
+	}
+}
+
+// TestPQIVF_GobDecodeLegacyPendingVectors checks that a file written before
+// the PendingVectors field existed loads into a usable index: the decoded nil
+// map is replaced, so a later Add works. The gob decoder matches struct fields
+// by name, so a struct without the field stands in for the old format.
+func TestPQIVF_GobDecodeLegacyPendingVectors(t *testing.T) {
+	legacy := struct {
+		Dimension        int
+		CoarseK          int
+		NumSubquantizers int
+		PqK              int
+		KMeansIters      int
+	}{Dimension: 4, CoarseK: 2, NumSubquantizers: 2, PqK: 4, KMeansIters: 5}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(legacy); err != nil {
+		t.Fatalf("encoding the legacy index failed: %v", err)
+	}
+	idx := &pqivf.Index{}
+	if err := idx.GobDecode(buf.Bytes()); err != nil {
+		t.Fatalf("GobDecode of the legacy index failed: %v", err)
+	}
+	if err := idx.Add(1, []float32{1, 2, 3, 4}); err != nil {
+		t.Fatalf("Add failed after decoding a legacy index: %v", err)
+	}
+	if got := idx.Stats().Count; got != 1 {
+		t.Errorf("expected count 1 after Add, got %d", got)
 	}
 }
 

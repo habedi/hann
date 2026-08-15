@@ -2,8 +2,10 @@ package hnsw_test
 
 import (
 	"bytes"
+	"encoding/gob"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/habedi/hann/core"
@@ -679,6 +681,434 @@ func TestHNSWIndex_FallbackSearchCounter(t *testing.T) {
 	if got := index.Stats().FallbackSearches; got < 1 {
 		t.Fatalf("expected at least 1 fallback search, got %d", got)
 	}
+}
+
+func TestHNSWIndex_SearchArgumentErrors(t *testing.T) {
+	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10))
+
+	// A search on an empty index must fail.
+	if _, err := index.Search([]float32{1, 2, 3, 4}, 1); err == nil {
+		t.Error("expected error searching an empty index, got none")
+	}
+
+	if err := index.Add(1, []float32{1, 2, 3, 4}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	// A query with the wrong dimension must fail.
+	if _, err := index.Search([]float32{1, 2}, 1); err == nil {
+		t.Error("expected error for a query with the wrong dimension, got none")
+	}
+}
+
+// TestHNSWIndex_SearchFallbackClampsK checks that a k larger than the index
+// still returns every node exactly once, in sorted order, after the
+// brute-force fallback has merged its candidates.
+func TestHNSWIndex_SearchFallbackClampsK(t *testing.T) {
+	// A small ef keeps searchLayer's result list short, so the search enters
+	// the fallback and gathers the remaining nodes there.
+	index := newTestIndex(t, 4, hnsw.WithM(4), hnsw.WithEf(2))
+	for i := 1; i <= 5; i++ {
+		if err := index.Add(i, []float32{float32(i), 0, 0, 0}); err != nil {
+			t.Fatalf("Add(%d) failed: %v", i, err)
+		}
+	}
+	neighbors, err := index.Search([]float32{0, 0, 0, 0}, 10)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(neighbors) != 5 {
+		t.Fatalf("expected 5 neighbors for k=10 over 5 nodes, got %d", len(neighbors))
+	}
+	for i, n := range neighbors {
+		if n.ID != i+1 {
+			t.Errorf("rank %d: expected id %d, got %d", i, i+1, n.ID)
+		}
+		if i > 0 && n.Distance < neighbors[i-1].Distance {
+			t.Errorf("rank %d: results are not sorted", i)
+		}
+	}
+}
+
+// TestHNSWIndex_SearchFallbackSmallShortfall checks the fallback with a
+// shortfall smaller than the number of unvisited nodes, so the per-worker
+// heaps and the merge heap must displace worse candidates instead of only
+// accumulating, and the final result must stay deduplicated and sorted.
+func TestHNSWIndex_SearchFallbackSmallShortfall(t *testing.T) {
+	index := newTestIndex(t, 4, hnsw.WithM(4), hnsw.WithEf(2))
+	const n = 60
+	for i := 1; i <= n; i++ {
+		if err := index.Add(i, []float32{float32(i), 0, 0, 0}); err != nil {
+			t.Fatalf("Add(%d) failed: %v", i, err)
+		}
+	}
+	// With ef 2 the layer search returns at most 2 candidates, so k 3 leaves
+	// a shortfall of 1 that the parallel scan must fill with the single best
+	// remaining node.
+	neighbors, err := index.Search([]float32{float32(n + 1), 0, 0, 0}, 3)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(neighbors) != 3 {
+		t.Fatalf("expected 3 neighbors, got %d", len(neighbors))
+	}
+	seen := make(map[int]bool, len(neighbors))
+	for i, nb := range neighbors {
+		if nb.ID < 1 || nb.ID > n {
+			t.Errorf("rank %d: id %d is not in the index", i, nb.ID)
+		}
+		if seen[nb.ID] {
+			t.Errorf("rank %d: id %d returned twice", i, nb.ID)
+		}
+		seen[nb.ID] = true
+		if i > 0 && nb.Distance < neighbors[i-1].Distance {
+			t.Errorf("rank %d: results are not sorted", i)
+		}
+	}
+	if neighbors[0].ID != n {
+		t.Errorf("expected the nearest id %d first, got %v", n, neighbors)
+	}
+}
+
+func TestHNSWIndex_BulkAddValidation(t *testing.T) {
+	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10))
+	if err := index.Add(1, []float32{1, 2, 3, 4}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	// A vector with the wrong dimension must fail.
+	if err := index.BulkAdd(map[int][]float32{2: {1, 2}}); err == nil {
+		t.Error("expected error for a bulk vector with the wrong dimension, got none")
+	}
+
+	// An id that already exists must fail.
+	if err := index.BulkAdd(map[int][]float32{1: {5, 6, 7, 8}}); err == nil {
+		t.Error("expected error for a duplicate id in BulkAdd, got none")
+	}
+
+	// The failed calls must not have added anything.
+	if got := index.Stats().Count; got != 1 {
+		t.Errorf("expected count 1 after failed BulkAdd calls, got %d", got)
+	}
+}
+
+// TestHNSWIndex_BulkDeleteUnknownID checks that an unknown id is skipped and
+// the known ids are still removed.
+func TestHNSWIndex_BulkDeleteUnknownID(t *testing.T) {
+	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10))
+	if err := index.BulkAdd(map[int][]float32{
+		1: {1, 0, 0, 0},
+		2: {2, 0, 0, 0},
+	}); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := index.BulkDelete([]int{99, 2}); err != nil {
+		t.Fatalf("BulkDelete with an unknown id failed: %v", err)
+	}
+	if got := index.Stats().Count; got != 1 {
+		t.Fatalf("expected count 1 after BulkDelete, got %d", got)
+	}
+	neighbors, err := index.Search([]float32{2, 0, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(neighbors) != 1 || neighbors[0].ID != 1 {
+		t.Errorf("expected the surviving id 1, got %v", neighbors)
+	}
+}
+
+// TestHNSWIndex_BulkUpdateWrongDimension checks that a wrong-dimension vector
+// for an existing id fails the batch and the entry stays at its old location.
+func TestHNSWIndex_BulkUpdateWrongDimension(t *testing.T) {
+	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10))
+	if err := index.BulkAdd(map[int][]float32{
+		1: {1, 0, 0, 0},
+		2: {2, 0, 0, 0},
+	}); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := index.BulkUpdate(map[int][]float32{1: {9, 9}}); err == nil {
+		t.Fatal("expected error for a bulk update with the wrong dimension, got none")
+	}
+	neighbors, err := index.Search([]float32{1, 0, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(neighbors) != 1 || neighbors[0].ID != 1 {
+		t.Errorf("expected id 1 at its old location after the failed BulkUpdate, got %v", neighbors)
+	}
+}
+
+// TestHNSWIndex_CosineOperations exercises the normalization paths of Add,
+// Update, BulkAdd, and BulkUpdate under the cosine metric, including the
+// dimension checks inside the batch normalization loops.
+func TestHNSWIndex_CosineOperations(t *testing.T) {
+	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10), hnsw.WithMetric(core.Cosine))
+
+	// BulkAdd normalizes its vectors before insertion.
+	if err := index.BulkAdd(map[int][]float32{
+		1: {2, 0, 0, 0},
+		2: {0, 3, 0, 0},
+	}); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	// The dimension check inside the normalization loop must reject a bad row.
+	if err := index.BulkAdd(map[int][]float32{3: {1, 2}}); err == nil {
+		t.Error("expected error for a wrong-dimension vector in cosine BulkAdd, got none")
+	}
+
+	// Add normalizes a single vector.
+	if err := index.Add(3, []float32{0, 0, 4, 0}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+
+	// Update normalizes the replacement vector.
+	if err := index.Update(3, []float32{0, 0, 0, 7}); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	// BulkUpdate normalizes its vectors, and its normalization loop rejects a
+	// wrong-dimension row before any entry is touched.
+	if err := index.BulkUpdate(map[int][]float32{1: {1, 2}}); err == nil {
+		t.Error("expected error for a wrong-dimension vector in cosine BulkUpdate, got none")
+	}
+	if err := index.BulkUpdate(map[int][]float32{1: {8, 0, 0, 0}}); err != nil {
+		t.Fatalf("BulkUpdate failed: %v", err)
+	}
+
+	// Under cosine only the direction matters, so each direction must map to
+	// its node regardless of the stored magnitudes.
+	cases := map[int][]float32{
+		1: {1, 0, 0, 0},
+		2: {0, 1, 0, 0},
+		3: {0, 0, 0, 1},
+	}
+	for id, query := range cases {
+		neighbors, err := index.Search(query, 1)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(neighbors) != 1 || neighbors[0].ID != id {
+			t.Errorf("expected id %d for its direction, got %v", id, neighbors)
+		}
+	}
+}
+
+// newFlakyIndex returns an index whose metric behaves like the Euclidean
+// distance until the returned flag is set, after which every distance call
+// fails. The flag is only flipped between operations, so it needs no locking.
+func newFlakyIndex(t *testing.T) (*hnsw.Index, *bool) {
+	t.Helper()
+	failNow := false
+	metric := core.NewMetric("flaky_test_metric", func(a, b []float32) (float64, error) {
+		if failNow {
+			return 0, fmt.Errorf("distance failure injected by the test")
+		}
+		return core.Euclidean.Distance(a, b)
+	}, false)
+	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10), hnsw.WithMetric(metric))
+	for i := 1; i <= 2; i++ {
+		if err := index.Add(i, []float32{float32(i), 0, 0, 0}); err != nil {
+			t.Fatalf("Add(%d) failed: %v", i, err)
+		}
+	}
+	return index, &failNow
+}
+
+// TestHNSWIndex_MetricErrorPropagation checks that a distance failure during
+// graph maintenance is returned to the caller, and that a failed Add rolls the
+// new node back out of the index.
+func TestHNSWIndex_MetricErrorPropagation(t *testing.T) {
+	t.Run("Add rolls back", func(t *testing.T) {
+		index, failNow := newFlakyIndex(t)
+		*failNow = true
+		if err := index.Add(3, []float32{3, 0, 0, 0}); err == nil {
+			t.Fatal("expected error from Add with a failing metric, got none")
+		}
+		if got := index.Stats().Count; got != 2 {
+			t.Fatalf("expected count 2 after the rolled-back Add, got %d", got)
+		}
+		// The rollback must leave the id free for a later insert.
+		*failNow = false
+		if err := index.Add(3, []float32{3, 0, 0, 0}); err != nil {
+			t.Fatalf("Add after the rollback failed: %v", err)
+		}
+		neighbors, err := index.Search([]float32{3, 0, 0, 0}, 1)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(neighbors) != 1 || neighbors[0].ID != 3 {
+			t.Errorf("expected id 3 after the re-added insert, got %v", neighbors)
+		}
+	})
+
+	t.Run("Update returns the error", func(t *testing.T) {
+		index, failNow := newFlakyIndex(t)
+		*failNow = true
+		if err := index.Update(1, []float32{9, 0, 0, 0}); err == nil {
+			t.Error("expected error from Update with a failing metric, got none")
+		}
+	})
+
+	t.Run("BulkUpdate returns the error", func(t *testing.T) {
+		index, failNow := newFlakyIndex(t)
+		*failNow = true
+		if err := index.BulkUpdate(map[int][]float32{1: {9, 0, 0, 0}}); err == nil {
+			t.Error("expected error from BulkUpdate with a failing metric, got none")
+		}
+	})
+
+	t.Run("BulkAdd returns the error", func(t *testing.T) {
+		index, failNow := newFlakyIndex(t)
+		*failNow = true
+		if err := index.BulkAdd(map[int][]float32{3: {3, 0, 0, 0}}); err == nil {
+			t.Error("expected error from BulkAdd with a failing metric, got none")
+		}
+	})
+
+	t.Run("Search returns the error", func(t *testing.T) {
+		index, failNow := newFlakyIndex(t)
+		*failNow = true
+		if _, err := index.Search([]float32{1, 0, 0, 0}, 1); err == nil {
+			t.Error("expected error from Search with a failing metric, got none")
+		}
+	})
+}
+
+// failingWriter fails every write, so Save must surface the writer's error.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, fmt.Errorf("write failure injected by the test")
+}
+
+func TestHNSWIndex_SaveFailingWriter(t *testing.T) {
+	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10))
+	if err := index.Add(1, []float32{1, 2, 3, 4}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	if err := index.Save(failingWriter{}); err == nil {
+		t.Error("expected error from Save with a failing writer, got none")
+	}
+}
+
+func TestHNSWIndex_GobDecodeErrors(t *testing.T) {
+	// Bytes that are not a gob stream must fail.
+	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10))
+	if err := index.GobDecode([]byte("not a gob stream")); err == nil {
+		t.Error("expected error decoding garbage bytes, got none")
+	}
+
+	// A file with a newer format version must be rejected. The gob decoder
+	// matches struct fields by name, so a minimal struct stands in for a
+	// future on-disk format.
+	future := struct{ FormatVersion int }{FormatVersion: 999}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(future); err != nil {
+		t.Fatalf("encoding the future format failed: %v", err)
+	}
+	err := index.GobDecode(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected error for a newer format version, got none")
+	}
+	if !strings.Contains(err.Error(), "format version") {
+		t.Errorf("expected a format version error, got %v", err)
+	}
+}
+
+// legacyHNSWNode and legacyHNSWIndex mirror the on-disk shape written before
+// the HasEntryPoint, FormatVersion, and EfConstruction fields existed. The gob
+// decoder matches struct fields by name, so encoding them produces the byte
+// stream an old version of the library would have written.
+type legacyHNSWNode struct {
+	ID     int
+	Vector []float32
+	Level  int
+	Links  map[int][]int
+}
+
+type legacyHNSWIndex struct {
+	Dimension        int
+	M                int
+	Ef               int
+	Nodes            map[int]legacyHNSWNode
+	EntryPoint       int
+	MaxLevel         int
+	DistanceName     string
+	ExhaustiveSearch bool
+}
+
+// decodeLegacyHNSW encodes the legacy form and decodes it into a fresh index.
+func decodeLegacyHNSW(t *testing.T, legacy legacyHNSWIndex) *hnsw.Index {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(legacy); err != nil {
+		t.Fatalf("encoding the legacy index failed: %v", err)
+	}
+	index := &hnsw.Index{}
+	if err := index.GobDecode(buf.Bytes()); err != nil {
+		t.Fatalf("GobDecode of the legacy index failed: %v", err)
+	}
+	return index
+}
+
+// TestHNSWIndex_GobDecodeLegacyFormat checks that files written before the
+// HasEntryPoint flag existed still load: a nonzero entry point id is used
+// directly, the id 0 sentinel recovers the node with id 0, and an empty file
+// leaves the index empty.
+func TestHNSWIndex_GobDecodeLegacyFormat(t *testing.T) {
+	t.Run("nonzero entry point", func(t *testing.T) {
+		legacy := legacyHNSWIndex{
+			Dimension: 6, M: 5, Ef: 10,
+			Nodes: map[int]legacyHNSWNode{
+				1: {ID: 1, Vector: testVector(1), Level: 0, Links: map[int][]int{0: {2}}},
+				2: {ID: 2, Vector: testVector(2), Level: 0, Links: map[int][]int{0: {1, 3}}},
+				3: {ID: 3, Vector: testVector(3), Level: 0, Links: map[int][]int{0: {2}}},
+			},
+			EntryPoint: 2, MaxLevel: 0, DistanceName: "euclidean",
+		}
+		index := decodeLegacyHNSW(t, legacy)
+		neighbors, err := index.Search(testVector(1), 1)
+		if err != nil {
+			t.Fatalf("Search failed after decoding a legacy index: %v", err)
+		}
+		if len(neighbors) != 1 || neighbors[0].ID != 1 {
+			t.Errorf("expected id 1 as nearest neighbor, got %v", neighbors)
+		}
+	})
+
+	t.Run("entry point with id 0", func(t *testing.T) {
+		legacy := legacyHNSWIndex{
+			Dimension: 6, M: 5, Ef: 10,
+			Nodes: map[int]legacyHNSWNode{
+				0: {ID: 0, Vector: testVector(0), Level: 0, Links: map[int][]int{0: {1}}},
+				1: {ID: 1, Vector: testVector(1), Level: 0, Links: map[int][]int{0: {0}}},
+			},
+			EntryPoint: 0, MaxLevel: 0, DistanceName: "euclidean",
+		}
+		index := decodeLegacyHNSW(t, legacy)
+		neighbors, err := index.Search(testVector(0), 1)
+		if err != nil {
+			t.Fatalf("Search failed after decoding a legacy index: %v", err)
+		}
+		if len(neighbors) != 1 || neighbors[0].ID != 0 {
+			t.Errorf("expected id 0 as nearest neighbor, got %v", neighbors)
+		}
+	})
+
+	t.Run("empty index", func(t *testing.T) {
+		legacy := legacyHNSWIndex{
+			Dimension: 6, M: 5, Ef: 10,
+			MaxLevel: -1, DistanceName: "euclidean",
+		}
+		index := decodeLegacyHNSW(t, legacy)
+		if got := index.Stats().Count; got != 0 {
+			t.Fatalf("expected an empty index, got count %d", got)
+		}
+		if _, err := index.Search(testVector(1), 1); err == nil {
+			t.Error("expected error searching a decoded empty index, got none")
+		}
+	})
 }
 
 func TestHNSWIndex_SetEf(t *testing.T) {
