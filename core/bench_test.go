@@ -43,6 +43,63 @@ func BenchmarkDistance(b *testing.B) {
 	}
 }
 
+// benchBatchSize and benchBatchDim size the batch benchmarks: one query
+// against a thousand candidates at the dimension of the SIFT-like datasets.
+const (
+	benchBatchSize = 1000
+	benchBatchDim  = 128
+)
+
+// benchBatchMetrics are the metrics the batch benchmarks compare.
+var benchBatchMetrics = []Metric{Euclidean, Cosine}
+
+// BenchmarkDistanceBatch measures one DistanceBatch call over a thousand
+// candidate vectors. BenchmarkDistanceSingle makes the same thousand
+// comparisons through per-pair Distance calls, so the pair isolates the
+// batching gain. The flat buffer is packed in setup, so neither benchmark
+// charges the packing cost; the rpt search benchmark charges it in the
+// consumer.
+func BenchmarkDistanceBatch(b *testing.B) {
+	for _, metric := range benchBatchMetrics {
+		b.Run(metric.Name(), func(b *testing.B) {
+			rng := rand.New(rand.NewSource(42))
+			query := benchVector(rng, benchBatchDim)
+			flat := benchVector(rng, benchBatchSize*benchBatchDim)
+			out := make([]float64, benchBatchSize)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := metric.DistanceBatch(query, flat, out); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkDistanceSingle measures a thousand per-pair Distance calls over
+// the same data as BenchmarkDistanceBatch, so one iteration of either
+// benchmark performs the same comparisons.
+func BenchmarkDistanceSingle(b *testing.B) {
+	for _, metric := range benchBatchMetrics {
+		b.Run(metric.Name(), func(b *testing.B) {
+			rng := rand.New(rand.NewSource(42))
+			query := benchVector(rng, benchBatchDim)
+			flat := benchVector(rng, benchBatchSize*benchBatchDim)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for j := 0; j < benchBatchSize; j++ {
+					row := flat[j*benchBatchDim : (j+1)*benchBatchDim]
+					if _, err := metric.Distance(query, row); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkNormalizeVector measures NormalizeVector at each benchmark
 // dimension.
 func BenchmarkNormalizeVector(b *testing.B) {

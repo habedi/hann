@@ -36,8 +36,9 @@
 //
 // The including .c file selects the kernels to emit:
 //
-//   HANN_EMIT_DISTANCE   euclidean, squared_euclidean, and cosine_distance
-//   HANN_EMIT_MANHATTAN  manhattan
+//   HANN_EMIT_DISTANCE   euclidean, squared_euclidean, and cosine_distance,
+//                        each with its batch variant
+//   HANN_EMIT_MANHATTAN  manhattan and its batch variant
 //   HANN_EMIT_NORMALIZE  normalize
 //
 // With HANN_UNROLL set to 4, an accumulation runs a main loop over four
@@ -226,7 +227,41 @@ float HANN_FN(cosine_distance)(const float* a, const float* b, size_t n) {
     if (cosine_similarity < -1.0f) cosine_similarity = -1.0f;
     return 1.0f - cosine_similarity;
 }
+// The batch kernels compute the distance from one query to n candidate
+// vectors stored consecutively in a flat buffer, one row of dim floats per
+// candidate, writing n doubles to out. Each batch loop calls the per-pair
+// kernel of the same instantiation, which lives in the same translation unit
+// under the same target attribute, so the compiler can inline it.
+HANN_TARGET
+void HANN_FN(euclidean_batch)(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (double)HANN_FN(euclidean)(q, flat + i * dim, dim);
+    }
+}
+
+HANN_TARGET
+void HANN_FN(squared_euclidean_batch)(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (double)HANN_FN(squared_euclidean)(q, flat + i * dim, dim);
+    }
+}
+
+HANN_TARGET
+void HANN_FN(cosine_distance_batch)(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (double)HANN_FN(cosine_distance)(q, flat + i * dim, dim);
+    }
+}
 #endif // HANN_EMIT_DISTANCE
+
+#ifdef HANN_EMIT_MANHATTAN
+HANN_TARGET
+void HANN_FN(manhattan_batch)(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (double)HANN_FN(manhattan)(q, flat + i * dim, dim);
+    }
+}
+#endif // HANN_EMIT_MANHATTAN
 
 #ifdef HANN_EMIT_NORMALIZE
 HANN_TARGET

@@ -118,7 +118,9 @@ Hann is organized into three layers that should not have upward dependencies:
 - A new distance function needs a scalar fallback, a kernel body in `simd_kernels.inc.h` whose instantiations provide the AVX, AVX2, and NEON
   variants, an
   entry in the function pointer table in `init_distance_functions`, a declaration in the header, and a `core.Metric` value pre-registered in
-  `core/metric.go`.
+  `core/metric.go`. The same applies to its batch variant, which computes the distances from one query to a flat buffer of candidate vectors and
+  backs `Metric.DistanceBatch` and `Metric.RankBatch`; the batch loop lives once in `simd_kernels.inc.h` and calls the per-pair kernel of the same
+  instantiation.
 - The AVX variants carry per-function target attributes behind the `HANN_TARGET_AVX` macro and are selected at runtime by `hann_cpu_init`. A machine
   without AVX must still build and run through the fallback path, which is why no `-m` ISA flag may appear in the cgo CFLAGS. The NEON variants
   compile behind the architecture guard alone, because every arm64 CPU has NEON, and `hann_cpu_init` installs them unconditionally on arm64.
