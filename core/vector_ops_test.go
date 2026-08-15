@@ -151,10 +151,10 @@ func TestNormalizeBatchLarge(t *testing.T) {
 	}
 }
 
-// TestNormalizeDifferentialAgainstReference compares NormalizeVector, through
-// whichever SIMD variant is installed on this machine, against an independent
-// float64 reference over random vectors, sweeping the vector-lane boundaries
-// so the tail loop is covered.
+// TestNormalizeDifferentialAgainstReference compares NormalizeVector against
+// an independent float64 reference over random vectors. It runs through
+// whichever SIMD variant is installed on this machine. The dimensions sweep
+// the vector-lane boundaries, so the tail loop is covered.
 func TestNormalizeDifferentialAgainstReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(11))
 	dims := []int{1, 2, 3, 7, 8, 9, 15, 16, 17, 25, 128, 200, 784}

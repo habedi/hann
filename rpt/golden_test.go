@@ -43,13 +43,13 @@ func goldenSearchIDs(t *testing.T, idx *rpt.Index, queries [][]float32, k int) [
 }
 
 // TestRPTIndex_GoldenFile pins the gob on-disk format. The serialized form
-// holds only the points, not the tree, so the tree is rebuilt on the first
-// search after Load; that rebuild draws randomness, which is why both the
+// holds only the points, not the tree, so Load rebuilds the tree. That
+// rebuild draws randomness. This is why both the
 // update path and the verify path run under a fixed HANN_SEED. The loading
-// index is constructed with the Manhattan metric so the test also pins that
-// the metric name stored in the file overrides the configured one. Run with
-// -update to regenerate the fixture after an intentional format change; the
-// test never regenerates it implicitly.
+// index is constructed with the Manhattan metric. The test therefore also
+// pins that the metric name stored in the file overrides the configured one.
+// Run with -update to regenerate the fixture after an intentional format
+// change. The test never regenerates it on its own.
 func TestRPTIndex_GoldenFile(t *testing.T) {
 	t.Setenv("HANN_SEED", "42")
 	const (
@@ -90,7 +90,7 @@ func TestRPTIndex_GoldenFile(t *testing.T) {
 		if err := f.Close(); err != nil {
 			t.Fatalf("closing %s failed: %v", gobPath, err)
 		}
-		// Compute the expected values from a freshly loaded index, which is
+		// Compute the expected values from a freshly loaded index. That is
 		// the exact state the verify path checks.
 		loaded := newIndex()
 		g, err := os.Open(gobPath)

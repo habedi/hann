@@ -31,7 +31,7 @@ type Factory struct {
 }
 
 // RunPropertyOps runs a random sequence of index operations against a
-// brute-force model and checks the invariants an index must keep: operations
+// brute-force model. It checks the invariants an index must keep: operations
 // on missing or duplicate ids fail, Stats().Count tracks the model, Search
 // never returns an id that is not in the index, distances match the stored
 // vectors when they are exact, and a save and load round-trip preserves all
@@ -243,7 +243,7 @@ func verifyAgainstModel(t *testing.T, f Factory, idx core.Index, model map[int][
 	}
 }
 
-// sortedIDs returns the model's ids in ascending order, so id selection is
+// sortedIDs returns the model's ids in ascending order. Id selection is then
 // deterministic for a given rng state.
 func sortedIDs(model map[int][]float32) []int {
 	ids := make([]int, 0, len(model))

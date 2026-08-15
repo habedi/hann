@@ -23,8 +23,8 @@ const (
 	defaultProbeMargin          = 1.0
 )
 
-// rebuildFloor is the minimum number of overlay entries (pending adds plus
-// stale tree references) a mutation must accumulate before the tree is
+// rebuildFloor is the smallest number of overlay entries (pending adds plus
+// stale tree references) that a mutation must reach before the tree is
 // rebuilt. Below it, small indexes are served from the overlay alone.
 const rebuildFloor = 64
 
@@ -49,7 +49,7 @@ func WithParallelThreshold(parallelThreshold int) Option {
 }
 
 // WithProbeMargin sets the margin within which a search probes both children
-// of a tree node, expressed as a fraction of the interquartile range of the
+// of a tree node. The margin is a fraction of the interquartile range of the
 // projection values the node saw at build time.
 func WithProbeMargin(probeMargin float64) Option {
 	return func(r *Index) { r.probeMargin = probeMargin }
@@ -67,7 +67,7 @@ func WithMetric(metric core.Metric) Option {
 }
 
 // New creates an RPT (Random Projection Tree) index for vectors of the given
-// dimension. Tuning parameters are set through options; the defaults are a
+// dimension. Tuning parameters are set through options. The defaults are a
 // leaf capacity of 10, 3 candidate projections, a parallel threshold of 100,
 // a probe margin of 1.0, brute-force fallback enabled, and the Euclidean
 // metric. It returns an error when the dimension, an option value, or the
@@ -132,7 +132,7 @@ type treeNode struct {
 // and staleCount counts ids the tree references whose entry in the point map
 // was removed or replaced. When the overlay grows past a threshold, the
 // mutation that crossed it rebuilds the tree while still holding the write
-// lock, which amortizes the rebuild cost across mutations and keeps Search
+// lock. This spreads the rebuild cost across mutations, and it keeps Search
 // under a single read lock.
 type Index struct {
 	mu                      sync.RWMutex      // protects concurrent access
@@ -214,8 +214,8 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 		})
 		// Choose the median as threshold.
 		mid := len(pairs) / 2
-		// The interquartile range of the projection values gives the probe
-		// margin a scale to work against at query time.
+		// Record the interquartile range of the projection values. The
+		// probe margin is scaled by it at query time.
 		spread := pairs[(3*len(pairs))/4].dot - pairs[len(pairs)/4].dot
 
 		// Choose a random point x and compute the maximum distance to any other point.
@@ -249,10 +249,10 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 				rightIDs = append(rightIDs, p.id)
 			}
 		}
-		// Fallback: the jitter pushed the threshold outside the range of the
-		// projection values and left one side empty. Split at the median
-		// value instead, so the threshold stored in the node still routes a
-		// query to the child that holds its neighbors.
+		// Fallback: the jitter pushed the threshold outside the range of
+		// the projection values, so one side is empty. Split at the median
+		// value instead. The threshold stored in the node then still sends
+		// a query to the child that holds its neighbors.
 		if len(leftIDs) == 0 || len(rightIDs) == 0 {
 			threshold = pairs[mid].dot
 			leftIDs, rightIDs = nil, nil
@@ -265,8 +265,8 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 			}
 		}
 		// Last resort: every projection value is equal, so no threshold on
-		// this projection separates the points. Split evenly by position;
-		// routing is arbitrary among points with identical projections.
+		// this projection separates the points. Split evenly by position.
+		// Routing is arbitrary among points with identical projections.
 		if len(leftIDs) == 0 || len(rightIDs) == 0 {
 			mid = len(ids) / 2
 			leftIDs = make([]int, mid)
@@ -342,7 +342,8 @@ func (r *Index) buildTree() {
 	// Use a new random source for building the tree.
 	localRand := rand.New(rand.NewSource(core.GetSeed()))
 	// Sort the ids to remove the map iteration order, then shuffle them with
-	// the seeded generator, so a run with HANN_SEED set builds the same tree.
+	// the seeded generator. A run with HANN_SEED set then builds the same
+	// tree.
 	sort.Ints(ids)
 	localRand.Shuffle(len(ids), func(i, j int) {
 		ids[i], ids[j] = ids[j], ids[i]
@@ -354,9 +355,10 @@ func (r *Index) buildTree() {
 }
 
 // maybeRebuild rebuilds the tree when the overlay has grown past the rebuild
-// threshold: more pending adds plus stale references than the larger of
-// rebuildFloor and a quarter of the stored points. Every mutation calls it
-// before releasing the write lock, which the caller must hold.
+// threshold. The threshold is the larger of rebuildFloor and a quarter of
+// the stored points, counted as pending adds plus stale references. Every
+// mutation calls it before releasing the write lock, which the caller must
+// hold.
 func (r *Index) maybeRebuild() {
 	threshold := len(r.points) / 4
 	if threshold < rebuildFloor {
@@ -383,13 +385,14 @@ func searchTreeMultiProbeWithMargin(node *treeNode, query []float32, dimension i
 	for i := 0; i < dimension; i++ {
 		dot += float64(query[i]) * float64(node.projection[i])
 	}
-	// If close to threshold, probe both children. The margin is a fraction
-	// of the interquartile range of the projection values seen at build
-	// time, so its effect does not depend on the scale of the data.
+	// If close to the threshold, probe both children. The margin is a
+	// fraction of the interquartile range of the projection values seen at
+	// build time. Its effect therefore does not depend on the scale of the
+	// data.
 	if math.Abs(dot-node.threshold) < margin*node.spread {
 		leftIDs := searchTreeMultiProbeWithMargin(node.left, query, dimension, margin)
 		rightIDs := searchTreeMultiProbeWithMargin(node.right, query, dimension, margin)
-		// Merge into a fresh slice; appending to leftIDs could write into the
+		// Merge into a fresh slice. Appending to leftIDs could write into the
 		// backing array of a leaf, which is shared between concurrent searches.
 		merged := make([]int, 0, len(leftIDs)+len(rightIDs))
 		merged = append(merged, leftIDs...)
@@ -417,11 +420,11 @@ func unionInts(a, b []int) []int {
 	return result
 }
 
-// computeDistances calculates the rank distance from the query to each point id
-// in the list. It does this in parallel across available CPUs. The Distance
-// fields of the returned neighbors carry rank values, which order candidates
-// exactly like true distances; Search converts the final selection to true
-// distances through the metric's FromRank before returning.
+// computeDistances calculates the rank distance from the query to each point
+// id in the list. It does this in parallel across available CPUs. The
+// Distance fields of the returned neighbors carry rank values. Rank values
+// order candidates exactly like true distances. Search converts the final
+// selection to true distances through the metric's FromRank before returning.
 func (r *Index) computeDistances(query []float32, ids []int) ([]core.Neighbor, error) {
 	// The tree can reference deleted ids until the next rebuild, so drop ids
 	// that are no longer in the point map.
@@ -475,8 +478,8 @@ func (r *Index) computeDistances(query []float32, ids []int) ([]core.Neighbor, e
 }
 
 // Search returns the k nearest neighbors to the query vector. It probes the
-// tree for candidate ids, merges in the ids added since the tree was last
-// built, and holds the read lock for its whole duration; rebuilding is the
+// tree for candidate ids and merges in the ids added since the tree was last
+// built. It holds the read lock for its whole duration: rebuilding is the
 // writers' job. When the tree was never built, the search is a scan of all
 // stored points and counts as a fallback search in Stats.
 func (r *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
@@ -497,8 +500,8 @@ func (r *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 	copy(queryCopy, query)
 	query = queryCopy
 
-	// A nil tree means no build has happened yet, so the pending-add overlay
-	// below covers every stored point and the search is a full scan.
+	// A nil tree means no build has happened yet. The pending-add overlay
+	// below then covers every stored point, and the search is a full scan.
 	if r.tree == nil {
 		r.fallbackSearches.Add(1)
 	}
@@ -566,7 +569,8 @@ func (r *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 
 // toTrueDistances converts the Distance field of each neighbor from a rank
 // value to the true distance. It is applied exactly once, to the final k
-// neighbors a search returns, so index-internal comparisons stay in rank space.
+// neighbors a search returns. Comparisons inside the index stay in rank
+// space.
 func (r *Index) toTrueDistances(neighbors []core.Neighbor) []core.Neighbor {
 	for i := range neighbors {
 		neighbors[i].Distance = r.metric.FromRank(neighbors[i].Distance)
@@ -581,9 +585,10 @@ func (r *Index) addLocked(id int, vector []float32) {
 	r.pendingAdds[id] = struct{}{}
 }
 
-// deleteLocked removes an id from the point map and the overlay. An id the
-// tree never held leaves the overlay with it; an id the tree holds becomes a
-// stale reference. The caller must hold the write lock.
+// deleteLocked removes an id from the point map and the overlay. When the
+// tree never held the id, the id is dropped from the overlay too. When the
+// tree holds the id, the id becomes a stale reference. The caller must hold
+// the write lock.
 func (r *Index) deleteLocked(id int) {
 	delete(r.points, id)
 	if _, pending := r.pendingAdds[id]; pending {
@@ -594,10 +599,10 @@ func (r *Index) deleteLocked(id int) {
 }
 
 // updateLocked replaces the vector of an id. When the tree holds the id, the
-// entry stays reachable by id but its placement in the tree goes stale, which
-// counts toward the rebuild threshold; a pending id is rescanned on every
-// search anyway, so it needs no bookkeeping. The caller must hold the write
-// lock.
+// entry stays reachable by id, but its placement in the tree goes stale.
+// That counts toward the rebuild threshold. A pending id is rescanned on
+// every search anyway, so it needs no bookkeeping. The caller must hold the
+// write lock.
 func (r *Index) updateLocked(id int, vector []float32) {
 	r.points[id] = vector
 	if _, pending := r.pendingAdds[id]; !pending {
@@ -736,7 +741,7 @@ type rptSerialized struct {
 }
 
 // formatVersion is the on-disk format version written by GobEncode. Files
-// written before the field existed decode it as zero and are accepted; files
+// written before the field existed decode it as zero and are accepted. Files
 // written by a newer version of the format are rejected on load.
 const formatVersion = 1
 
@@ -777,8 +782,9 @@ func (r *Index) GobDecode(data []byte) error {
 	}
 	r.dimension = ser.Dimension
 	r.points = ser.Points
-	// Restore the metric from its name. An unknown name keeps an already
-	// configured metric, and is an error when there is none to keep.
+	// Restore the metric from its name. On an unknown name, keep the metric
+	// that is already configured. When there is none to keep, return an
+	// error.
 	if m, ok := core.MetricByName(ser.DistanceName); ok {
 		r.metric = m
 	} else if r.metric.IsZero() {
@@ -794,7 +800,7 @@ func (r *Index) GobDecode(data []byte) error {
 	r.tree = nil
 	// Build the tree now, so a loaded index searches without a first-search
 	// rebuild. The build draws its randomness from core.GetSeed here instead
-	// of at the first search, which is the same draw under HANN_SEED.
+	// of at the first search. Under HANN_SEED that is the same draw.
 	if len(r.points) > 0 {
 		r.buildTree()
 	}
@@ -802,7 +808,7 @@ func (r *Index) GobDecode(data []byte) error {
 }
 
 // Save writes the index to the given writer using gob encoding.
-// GobEncode takes the read lock, so Save must not take it as well; a writer
+// GobEncode takes the read lock, so Save must not take it as well. A writer
 // queued between the two acquisitions would deadlock the index.
 func (r *Index) Save(w io.Writer) error {
 	enc := gob.NewEncoder(w)

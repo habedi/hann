@@ -25,13 +25,14 @@ type QueryResult struct {
 	groundTruth string
 }
 
-// RunDataset loads the dataset, builds the index using the provided factory,
-// and runs kNN queries on a subset of test queries. If numQueries is negative
-// or exceeds the number of available test vectors, all test vectors are used.
-// It prints predicted results, ground-truth (if not benchmarking), and computes
-// Recall@k along with per-query response times, average response time, and overall runtime.
-// When benchmarking, a progress bar is displayed.
-// The number of worker threads is read from the HANN_BENCH_NTRD environment variable.
+// RunDataset loads the dataset and builds the index with the given factory.
+// It then runs kNN queries on a subset of the test queries. If numQueries is
+// negative or larger than the number of test vectors, all test vectors are
+// used, and benchmark mode is on. Outside benchmark mode, it prints the
+// predicted results and the ground truth for each query. It always computes
+// Recall@k, per-query response times, the average response time, and the
+// overall runtime. In benchmark mode, it shows a progress bar. The number of
+// worker threads comes from the HANN_BENCH_NTRD environment variable.
 func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxResults int) {
 	datasetPath := filepath.Join(root, dataset)
 	fmt.Printf("Loading dataset: %s\n", dataset)

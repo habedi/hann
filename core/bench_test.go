@@ -21,8 +21,8 @@ func benchVector(rng *rand.Rand, dim int) []float32 {
 }
 
 // BenchmarkDistance measures every built-in metric's Distance at each
-// benchmark dimension, so the fallback, AVX, and AVX2 kernels can be compared
-// across machines.
+// benchmark dimension. This lets the fallback, AVX, and AVX2 kernels be
+// compared across machines.
 func BenchmarkDistance(b *testing.B) {
 	metrics := []Metric{Euclidean, SquaredEuclidean, Manhattan, Cosine}
 	for _, metric := range metrics {
@@ -55,10 +55,10 @@ var benchBatchMetrics = []Metric{Euclidean, Cosine}
 
 // BenchmarkDistanceBatch measures one DistanceBatch call over a thousand
 // candidate vectors. BenchmarkDistanceSingle makes the same thousand
-// comparisons through per-pair Distance calls, so the pair isolates the
-// batching gain. The flat buffer is packed in setup, so neither benchmark
-// charges the packing cost; the rpt search benchmark charges it in the
-// consumer.
+// comparisons through per-pair Distance calls. Comparing the two shows the
+// gain from batching alone. The flat buffer is packed in setup, so neither
+// benchmark counts the packing cost. The rpt search benchmark counts it in
+// the consumer.
 func BenchmarkDistanceBatch(b *testing.B) {
 	for _, metric := range benchBatchMetrics {
 		b.Run(metric.Name(), func(b *testing.B) {
@@ -78,8 +78,8 @@ func BenchmarkDistanceBatch(b *testing.B) {
 }
 
 // BenchmarkDistanceSingle measures a thousand per-pair Distance calls over
-// the same data as BenchmarkDistanceBatch, so one iteration of either
-// benchmark performs the same comparisons.
+// the same data as BenchmarkDistanceBatch. One iteration of either benchmark
+// makes the same comparisons.
 func BenchmarkDistanceSingle(b *testing.B) {
 	for _, metric := range benchBatchMetrics {
 		b.Run(metric.Name(), func(b *testing.B) {
@@ -111,10 +111,10 @@ func BenchmarkNormalizeVector(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				// NormalizeVector mutates its argument, so each iteration
+				// NormalizeVector changes its argument, so each iteration
 				// copies the source into a reused buffer first. The copy is
-				// included in the measured time, so the reported figure is a
-				// slight overestimate of normalization alone.
+				// included in the measured time, so the reported time is
+				// slightly more than normalization alone.
 				copy(buf, src)
 				NormalizeVector(buf)
 			}

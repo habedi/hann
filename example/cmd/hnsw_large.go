@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	// Using HNSW index with GIST and DEEP1B datasets
+	// Run the HNSW index on the GIST and DEEP1B datasets.
 	HNSWIndexGIST("euclidean")
 	HNSWIndexDEEP1B("cosine")
 }

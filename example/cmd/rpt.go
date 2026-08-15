@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	// Using RPT index with FashionMNIST and SIFT datasets
+	// Run the RPT index on the FashionMNIST and SIFT datasets.
 	RPTIndexFashionMNIST()
 	RPTIndexSIFT()
 }

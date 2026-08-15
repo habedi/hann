@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	// Using RPT index with GIST dataset
+	// Run the RPT index on the GIST dataset.
 	RPTIndexGIST()
 }
 

@@ -11,9 +11,9 @@ import (
 	"github.com/habedi/hann/core"
 )
 
-// scanIndex is a minimal exact index used to test the harnesses themselves:
-// it stores vectors in a map and searches by a full scan. It is deliberately
-// simple, so a harness failure against it points at the harness.
+// scanIndex is a minimal exact index used to test the harnesses themselves.
+// It stores vectors in a map and searches by a full scan. It is kept simple
+// on purpose, so a failure against it points at the harness.
 type scanIndex struct {
 	mu      sync.Mutex
 	dim     int
@@ -128,9 +128,9 @@ func scanFactory(dim int) Factory {
 	}
 }
 
-// The tests below run every harness against the exact scan index, so the
-// harnesses themselves are exercised by this package's own test suite. A
-// failure here means the harness rejects a correct index.
+// The tests below run every harness against the exact scan index, so this
+// package's own test suite exercises the harnesses. A failure here means a
+// harness rejects a correct index.
 
 func TestRunExactDifferentialHarness(t *testing.T) {
 	RunExactDifferential(t, scanFactory(8), 8, 120, 5)

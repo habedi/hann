@@ -11,11 +11,11 @@ import (
 	"github.com/habedi/hann/rpt"
 )
 
-// TestRunDataset exercises the success paths of RunDataset against a
-// synthetic dataset written to t.TempDir(). The failure paths (a missing
-// dataset, a failing BulkAdd, a failing Train, or a failing Search) call
-// log.Fatalf, which exits the test process, so they cannot be tested as
-// written and are exercised indirectly through the loader tests instead.
+// TestRunDataset covers the success paths of RunDataset. It uses a synthetic
+// dataset written to t.TempDir(). The failure paths (a missing dataset, a
+// failing BulkAdd, a failing Train, or a failing Search) call log.Fatalf,
+// which exits the test process. So they cannot be tested here. The loader
+// tests cover them indirectly.
 func TestRunDataset(t *testing.T) {
 	t.Setenv("HANN_SEED", "42")
 

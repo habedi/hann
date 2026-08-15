@@ -14,8 +14,8 @@ import (
 )
 
 func main() {
-	// Start the pprof HTTP server on port 6060.
-	// This will expose profiling endpoints at /debug/pprof/
+	// Start the pprof HTTP server on port 6060. It exposes the profiling
+	// endpoints at /debug/pprof/.
 	go func() {
 		log.Println("Starting pprof server on :6060")
 		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
@@ -23,7 +23,7 @@ func main() {
 		}
 	}()
 
-	// Benchmarking HNSW index with FashionMNIST and Glove datasets
+	// Benchmark the HNSW index on the FashionMNIST and Glove datasets.
 	BenchHNSWIndexFashionMNIST()
 	BenchHNSWIndexGlove25()
 	BenchHNSWIndexGlove200()

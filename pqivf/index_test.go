@@ -12,8 +12,8 @@ import (
 	"github.com/habedi/hann/pqivf"
 )
 
-// newIndex constructs an index with the given parameters through New and its
-// options, failing the test on a constructor error.
+// newIndex builds an index with the given parameters through New and its
+// options. It fails the test when the constructor returns an error.
 func newIndex(t *testing.T, dim, coarseK, numSubquantizers, pqK, kMeansIters int) *pqivf.Index {
 	t.Helper()
 	idx, err := pqivf.New(dim,
@@ -253,8 +253,8 @@ func TestPQIVF_TrainAndSearch(t *testing.T) {
 	}
 }
 
-// trainedIndex returns an index trained on four fixed vectors, for the tests
-// that exercise mutations after training.
+// trainedIndex returns an index trained on four fixed vectors. The tests
+// that mutate a trained index start from it.
 func trainedIndex(t *testing.T) *pqivf.Index {
 	t.Helper()
 	idx := newIndex(t, 6, 3, 2, 256, 10)
@@ -273,8 +273,8 @@ func trainedIndex(t *testing.T) *pqivf.Index {
 	return idx
 }
 
-// searchIDs returns the ids Search finds for the query, failing the test on a
-// search error.
+// searchIDs returns the ids Search finds for the query. It fails the test
+// when the search returns an error.
 func searchIDs(t *testing.T, idx *pqivf.Index, query []float32, k int) map[int]bool {
 	t.Helper()
 	neighbors, err := idx.Search(query, k)
@@ -505,10 +505,10 @@ func TestPQIVF_InvalidCoarseK(t *testing.T) {
 	}
 }
 
-// TestPQIVF_NewValidation covers the remaining constructor errors: a
-// non-positive dimension, PQ codebook size, k-means iteration count, or
-// subquantizer count, and a dimension that the subquantizer count does not
-// divide.
+// TestPQIVF_NewValidation covers the remaining constructor errors. One group
+// is a non-positive dimension, PQ codebook size, k-means iteration count, or
+// subquantizer count. The other is a dimension that the subquantizer count
+// does not divide.
 func TestPQIVF_NewValidation(t *testing.T) {
 	cases := []struct {
 		name string
@@ -533,9 +533,9 @@ func TestPQIVF_NewValidation(t *testing.T) {
 	}
 }
 
-// TestPQIVF_DefaultNumSubquantizers checks the default subquantizer rule: the
-// largest of 8, 4, 2, and 1 that divides the dimension is chosen, so every
-// positive dimension yields a valid index without options.
+// TestPQIVF_DefaultNumSubquantizers checks the default subquantizer rule.
+// The largest of 8, 4, 2, and 1 that divides the dimension is chosen, so
+// every positive dimension gives a valid index without options.
 func TestPQIVF_DefaultNumSubquantizers(t *testing.T) {
 	for _, dim := range []int{16, 12, 6, 7} {
 		if _, err := pqivf.New(dim); err != nil {
@@ -545,8 +545,8 @@ func TestPQIVF_DefaultNumSubquantizers(t *testing.T) {
 }
 
 // clusteredVectors returns three vectors around each of four well-separated
-// centers, keyed by ids 0 through 11, so coarse clustering with four clusters
-// cannot put every vector into one cluster.
+// centers, keyed by ids 0 through 11. Coarse clustering with four clusters
+// therefore cannot put every vector into one cluster.
 func clusteredVectors() map[int][]float32 {
 	vectors := make(map[int][]float32, 12)
 	id := 0
@@ -561,10 +561,10 @@ func clusteredVectors() map[int][]float32 {
 }
 
 // TestPQIVF_CandidateClustersAndFallbackOff checks the observable effect of
-// WithCandidateClusters and WithBruteForceFallback: with one probed cluster
+// WithCandidateClusters and WithBruteForceFallback. With one probed cluster
 // and the fallback off, a k larger than one cluster's entries returns fewer
-// than k results, while the same search with the fallback on returns all of
-// them through the brute-force scan.
+// than k results. The same search with the fallback on returns all of them
+// through the brute-force scan.
 func TestPQIVF_CandidateClustersAndFallbackOff(t *testing.T) {
 	vectors := clusteredVectors()
 	query := vectors[0]
@@ -718,8 +718,8 @@ func TestPQIVF_ZeroValueIndexRejectsAdd(t *testing.T) {
 	}
 }
 
-// TestPQIVF_SearchWrongDimensionAfterTrain checks the query dimension check on
-// a trained index, where the untrained-index error cannot mask it.
+// TestPQIVF_SearchWrongDimensionAfterTrain checks the query dimension check
+// on a trained index. There the untrained-index error cannot hide it.
 func TestPQIVF_SearchWrongDimensionAfterTrain(t *testing.T) {
 	idx := newIndex(t, 4, 2, 2, 4, 5)
 	if err := idx.BulkAdd(map[int][]float32{
@@ -762,9 +762,10 @@ func TestPQIVF_GobDecodeErrors(t *testing.T) {
 }
 
 // TestPQIVF_GobDecodeLegacyPendingVectors checks that a file written before
-// the PendingVectors field existed loads into a usable index: the decoded nil
-// map is replaced, so a later Add works. The gob decoder matches struct fields
-// by name, so a struct without the field stands in for the old format.
+// the PendingVectors field existed loads into a usable index. The decoded
+// nil map is replaced, so a later Add works. The gob decoder matches struct
+// fields by name, so a struct without the field stands in for the old
+// format.
 func TestPQIVF_GobDecodeLegacyPendingVectors(t *testing.T) {
 	legacy := struct {
 		Dimension        int
@@ -813,8 +814,9 @@ func pqivfFactory(t *testing.T) testutil.Factory {
 // TestPQIVF_FallbackSearchCounter checks that a search that falls back to a
 // brute-force scan is visible in Stats.
 func TestPQIVF_FallbackSearchCounter(t *testing.T) {
-	// More clusters than the search probes, so a large k cannot be satisfied
-	// from the probed clusters alone and the brute-force fallback triggers.
+	// The index has more clusters than the search probes. A large k then
+	// cannot be filled from the probed clusters alone, so the brute-force
+	// fallback triggers.
 	pq := newIndex(t, 4, 8, 2, 2, 5)
 	for id := 0; id < 40; id++ {
 		vec := []float32{float32(id), float32(id + 1), float32(id + 2), float32(id + 3)}
@@ -836,9 +838,9 @@ func TestPQIVF_FallbackSearchCounter(t *testing.T) {
 	}
 }
 
-// TestPQIVF_DeleteAllThenSearch empties a trained index through Delete and
-// checks that a search returns no results and no error, and that a
-// subsequent Add makes the index searchable again.
+// TestPQIVF_DeleteAllThenSearch empties a trained index through Delete. A
+// search must then return no results and no error, and a later Add must
+// make the index searchable again.
 func TestPQIVF_DeleteAllThenSearch(t *testing.T) {
 	t.Setenv("HANN_SEED", "42")
 	dim := 4

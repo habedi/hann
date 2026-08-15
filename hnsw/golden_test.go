@@ -30,9 +30,9 @@ func goldenData() (map[int][]float32, [][]float32) {
 
 // TestHNSWIndex_GoldenFile pins the gob on-disk format. In normal mode it
 // loads a committed fixture and checks the stats and search results against
-// the committed expectations; it must never regenerate the fixture
-// implicitly, because a fixture written by an older version has to keep
-// loading. Run with -update to rebuild the fixture after a deliberate,
+// the committed expectations. It must never regenerate the fixture on its
+// own, because a fixture written by an older version has to keep loading.
+// Run with -update to rebuild the fixture after a deliberate,
 // backward-compatible format change.
 func TestHNSWIndex_GoldenFile(t *testing.T) {
 	gobPath := filepath.Join("testdata", "index_v1.gob")
@@ -44,8 +44,8 @@ func TestHNSWIndex_GoldenFile(t *testing.T) {
 			t.Fatalf("failed to create testdata: %v", err)
 		}
 		index := newTestIndex(t, 8, hnsw.WithM(8), hnsw.WithEf(50))
-		// Insert id 0 first, so it can plausibly become the entry point, which
-		// is the case the HasEntryPoint flag exists for.
+		// Insert id 0 first, so it can plausibly become the entry point.
+		// That is the case the HasEntryPoint flag exists for.
 		for id := 0; id < len(data); id++ {
 			if err := index.Add(id, testutil.CopyVector(data[id])); err != nil {
 				t.Fatalf("Add(%d) failed: %v", id, err)

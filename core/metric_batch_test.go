@@ -99,9 +99,9 @@ func TestDistanceBatchErrors(t *testing.T) {
 	}
 }
 
-// TestDistanceBatchCustomMetric checks that a metric created with NewMetric,
-// which has no batch kernel, computes batches through the per-pair fallback
-// loop for both batch methods.
+// TestDistanceBatchCustomMetric checks a metric created with NewMetric,
+// which has no batch kernel. Both batch methods must compute batches through
+// the per-pair fallback loop.
 func TestDistanceBatchCustomMetric(t *testing.T) {
 	dot := func(a, b []float32) (float64, error) {
 		sum := 0.0
@@ -136,9 +136,9 @@ func TestDistanceBatchCustomMetric(t *testing.T) {
 	}
 }
 
-// TestDistanceBatchLoopError checks that the per-pair fallback loop stops at
-// the first candidate whose distance computation fails and returns that error
-// to the caller, for both batch methods.
+// TestDistanceBatchLoopError checks the per-pair fallback loop for both
+// batch methods. The loop must stop at the first candidate whose distance
+// computation fails and return that error to the caller.
 func TestDistanceBatchLoopError(t *testing.T) {
 	failure := errors.New("distance failure injected by the test")
 	// The function fails on any candidate whose first element is negative, so

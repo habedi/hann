@@ -9,11 +9,12 @@ import (
 	"github.com/habedi/hann/internal/testutil"
 )
 
-// measureMeanRecall builds indexes over clustered data with the given metric
-// and returns the mean recall at k=10 over 20 queries per build against the
-// brute-force ground truth. The graph shape depends on the package-level
-// level generator, so recall varies between builds; averaging over three
-// builds narrows the spread the assertion has to allow for.
+// measureMeanRecall builds indexes over clustered data with the given
+// metric. It returns the mean recall at k=10 over 20 queries per build
+// against the brute-force ground truth. The graph shape depends on the
+// package-level level generator, so recall varies between builds.
+// Averaging over three builds narrows the spread the assertion has to
+// allow for.
 func measureMeanRecall(t *testing.T, metric core.Metric) float64 {
 	t.Helper()
 	const (
@@ -29,8 +30,8 @@ func measureMeanRecall(t *testing.T, metric core.Metric) float64 {
 		dataSeed := int64(42 + 100*b)
 		data := testutil.ClusteredData(dataSeed, n, dim, clusters)
 		index := newTestIndex(t, dim, hnsw.WithM(16), hnsw.WithEf(100), hnsw.WithMetric(metric))
-		// The index normalizes cosine vectors in place, so it gets copies and
-		// the ground truth keeps the raw data.
+		// The index normalizes cosine vectors in place. It therefore gets
+		// copies, and the ground truth keeps the raw data.
 		vectors := make(map[int][]float32, len(data))
 		for id, vec := range data {
 			vectors[id] = testutil.CopyVector(vec)
@@ -59,7 +60,7 @@ func TestHNSWIndex_RecallEuclidean(t *testing.T) {
 	t.Logf("euclidean mean recall at k=10: %.4f", recall)
 	// Observed value over 12 runs: 1.00 on every run. The neighbor selection
 	// heuristic raised the range from the 0.64 to 0.93 seen with closest-M
-	// selection, because it keeps the level 0 graph connected across
+	// selection. It does so by keeping the level 0 graph connected across
 	// clusters. The threshold is a regression tripwire, not a quality goal.
 	if recall < 0.90 {
 		t.Errorf("euclidean mean recall %.4f is below the regression threshold 0.90", recall)
@@ -79,13 +80,13 @@ func TestHNSWIndex_RecallCosine(t *testing.T) {
 
 // TestHNSWIndex_Level0Connectivity checks that the level 0 graph stays
 // connected on clustered data. A search whose depth covers the whole index
-// must reach every node through the graph alone, so the brute-force fallback
-// counter has to stay at zero. Closest-M neighbor selection used to split the
-// graph into per-cluster components, which this test would catch. Graph
-// construction is unseeded and HNSW connectivity is probabilistic, so a rare
-// build can strand a node; the test therefore builds up to three independent
-// indexes and requires at least one fully connected graph, which the
-// fragmentation regression can never produce.
+// must reach every node through the graph alone, so the brute-force
+// fallback counter has to stay at zero. Closest-M neighbor selection used
+// to split the graph into per-cluster components. This test would catch
+// that. Graph construction is unseeded and HNSW connectivity is
+// probabilistic, so a rare build can strand a node. The test therefore
+// builds up to three independent indexes and requires at least one fully
+// connected graph. The fragmentation regression can never produce one.
 func TestHNSWIndex_Level0Connectivity(t *testing.T) {
 	const (
 		dim      = 16
@@ -121,7 +122,7 @@ func TestHNSWIndex_Level0Connectivity(t *testing.T) {
 }
 
 // TestHNSWIndex_DifferentialExact compares complete searches against brute
-// force for both supported distances; with k equal to the index size the
+// force for both supported distances. With k equal to the index size the
 // result must be the exact ranking.
 func TestHNSWIndex_DifferentialExact(t *testing.T) {
 	for _, metric := range []core.Metric{core.Euclidean, core.Cosine} {

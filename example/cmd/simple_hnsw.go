@@ -11,8 +11,9 @@ import (
 	"github.com/habedi/hann/hnsw"
 )
 
-// Note: results may vary between different runs even if HANN_SEED is set.
-// That's expected as the HNSW index uses none-deterministic operations (like parallel loops).
+// Note: results may vary between runs even if HANN_SEED is set. That is
+// expected, because the HNSW index uses non-deterministic operations, such
+// as parallel loops.
 
 func main() {
 
@@ -88,7 +89,7 @@ func main() {
 	}
 	saveFile.Close()
 
-	// Create a new index and load the saved state using the io.Reader.
+	// Create a new index and load the saved state from the io.Reader.
 	fmt.Println("Loading index from file:", filePath)
 	loadFile, err := os.Open(filePath)
 	if err != nil {
@@ -115,7 +116,7 @@ func main() {
 		fmt.Printf("ID: %d, Distance: %f\n", n.ID, n.Distance)
 	}
 
-	// Remove the index file now that we don't need it anymore.
+	// Remove the index file. It is no longer needed.
 	if err := os.Remove(filePath); err != nil {
 		log.Printf("Warning: could not remove temporary file %s: %v", filePath, err)
 	}

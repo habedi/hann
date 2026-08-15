@@ -158,14 +158,14 @@ func TestRPTIndex_SaveWithConcurrentWriters(t *testing.T) {
 	}
 }
 
-// TestRPTIndex_ConcurrentMultiProbeSearch checks that two concurrent searches
-// cannot write into the same backing array when the multi-probe branch merges
-// candidate lists from leaves. Run with the race detector.
+// TestRPTIndex_ConcurrentMultiProbeSearch checks the multi-probe branch that
+// merges candidate lists from leaves. Two concurrent searches must not write
+// into the same backing array there. Run with the race detector.
 func TestRPTIndex_ConcurrentMultiProbeSearch(t *testing.T) {
 	dim := 8
-	// A very large probe margin makes every internal node probe both children,
-	// and a leaf capacity of 5 allows leaves whose slices have spare capacity
-	// that can hold the sibling's points.
+	// A very large probe margin makes every internal node probe both
+	// children. A leaf capacity of 5 allows leaves whose slices have spare
+	// capacity that can hold the sibling's points.
 	idx := mustNew(t, dim,
 		rpt.WithLeafCapacity(5),
 		rpt.WithCandidateProjections(1),
@@ -212,7 +212,7 @@ func TestRPTIndex_ConcurrentMultiProbeSearch(t *testing.T) {
 }
 
 // TestRPTIndex_ConcurrentStress exercises the index from many goroutines at
-// once. Run with the race detector; this test is the permanent guard for the
+// once. Run with the race detector. This test is the permanent guard for the
 // concurrency bugs the package had.
 func TestRPTIndex_ConcurrentStress(t *testing.T) {
 	testutil.RunConcurrentOps(t, rptFactory(t, 16), 16, 8, 300)

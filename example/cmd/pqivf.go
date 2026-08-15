@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	// Using PQIVF index with FashionMNIST and SIFT datasets
+	// Run the PQIVF index on the FashionMNIST and SIFT datasets.
 	PQIVFIndexFashionMNIST()
 	PQIVFIndexSIFT()
 }

@@ -325,8 +325,8 @@ func TestRPTIndex_SeedReproducibility(t *testing.T) {
 }
 
 // amortizedTestIndex builds an index whose search results depend strongly on
-// the tree structure: no probe margin and no brute-force fallback, so a
-// rebuild under a different seed is visible in the returned ids.
+// the tree structure. It uses no probe margin and no brute-force fallback.
+// A rebuild under a different seed is therefore visible in the returned ids.
 func amortizedTestIndex(t *testing.T, dim, n int) *rpt.Index {
 	t.Helper()
 	idx := mustNew(t, dim,
@@ -344,13 +344,13 @@ func amortizedTestIndex(t *testing.T, dim, n int) *rpt.Index {
 	return idx
 }
 
-// TestRPTIndex_AddDoesNotRebuildTree checks that a single Add on a built index
-// does not rebuild the tree, and that the added id is still findable through
-// the search path. The absence of a rebuild is observed through the seed: two
-// indexes are built identically under one HANN_SEED, then each receives the
-// same single Add and the same searches under a different HANN_SEED. A rebuild
-// would draw the new seed and produce diverging trees, so identical results
-// prove no rebuild happened.
+// TestRPTIndex_AddDoesNotRebuildTree checks that a single Add on a built
+// index does not rebuild the tree, and that the added id is still findable
+// through the search path. The absence of a rebuild is observed through the
+// seed. Two indexes are built identically under one HANN_SEED. Then each
+// receives the same single Add and the same searches under a different
+// HANN_SEED. A rebuild would draw the new seed and produce different trees.
+// Identical results therefore prove no rebuild happened.
 func TestRPTIndex_AddDoesNotRebuildTree(t *testing.T) {
 	const (
 		dim = 8
@@ -412,8 +412,8 @@ func TestRPTIndex_AddDoesNotRebuildTree(t *testing.T) {
 
 // TestRPTIndex_AmortizedRebuildCorrectness checks that repeated single
 // Add-then-Search cycles keep the index correct, both below the rebuild
-// threshold and across it: every added id is findable by an exact-match query,
-// and Stats reports the right count throughout.
+// threshold and across it. Every added id must be findable by an exact-match
+// query, and Stats must report the right count throughout.
 func TestRPTIndex_AmortizedRebuildCorrectness(t *testing.T) {
 	t.Setenv("HANN_SEED", "42")
 	const (
@@ -462,8 +462,8 @@ func TestRPTIndex_AmortizedRebuildCorrectness(t *testing.T) {
 	if count := idx.Stats().Count; count != total {
 		t.Fatalf("Stats().Count = %d after BulkAdd, want %d", count, total)
 	}
-	// A complete search must reach every id exactly once, both the ids the
-	// rebuild folded into the tree and any still in the overlay.
+	// A complete search must reach every id exactly once: both the ids the
+	// rebuild moved into the tree and any still in the overlay.
 	all, err := idx.Search(makeVector(rnd, dim), total)
 	if err != nil {
 		t.Fatalf("complete Search failed: %v", err)
@@ -600,8 +600,8 @@ func TestRPTIndex_FallbackSearchCounter(t *testing.T) {
 
 // TestRPTIndex_DuplicateVectors builds a tree from many copies of the same
 // vector. Every projection value is equal on such a set, so no threshold can
-// separate the points and the tree build must fall back to a positional
-// split instead of recursing forever. Searches must still work.
+// separate the points. The tree build must fall back to a split by position
+// instead of recursing forever, and searches must still work.
 func TestRPTIndex_DuplicateVectors(t *testing.T) {
 	t.Setenv("HANN_SEED", "42")
 	dim := 8
@@ -651,9 +651,9 @@ func TestRPTIndex_MetricErrorPropagation(t *testing.T) {
 	}
 }
 
-// TestRPTIndex_FallbackOffShortfall checks that a search that gathers fewer
-// candidates than k with the brute-force fallback disabled returns the
-// candidates it has, sorted, instead of an error or a full scan.
+// TestRPTIndex_FallbackOffShortfall runs a search that gathers fewer
+// candidates than k while the brute-force fallback is disabled. The search
+// must return the candidates it has, sorted, not an error or a full scan.
 func TestRPTIndex_FallbackOffShortfall(t *testing.T) {
 	t.Setenv("HANN_SEED", "42")
 	dim := 8
@@ -707,7 +707,7 @@ func TestRPTIndex_GobDecodeErrors(t *testing.T) {
 	}
 
 	// An unknown metric name is an error when the decoding index has no
-	// metric of its own to keep, which is the case for a zero value.
+	// metric of its own to keep. A zero-value index has none.
 	unknown := struct{ DistanceName string }{DistanceName: "no_such_metric"}
 	buf.Reset()
 	if err := gob.NewEncoder(&buf).Encode(unknown); err != nil {

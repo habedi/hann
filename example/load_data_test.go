@@ -10,8 +10,8 @@ import (
 	"github.com/habedi/hann/rpt"
 )
 
-// The fixtures below are tiny synthetic datasets written to t.TempDir(),
-// so the tests do not depend on the downloaded example datasets.
+// The fixtures below are tiny synthetic datasets written to t.TempDir().
+// This way the tests do not depend on the downloaded example datasets.
 
 // trainRows holds six 4-dimensional training vectors (ids 0 through 5).
 var trainRows = []string{
@@ -24,8 +24,8 @@ var trainRows = []string{
 }
 
 // testRows holds two query vectors. Under Euclidean distance, the nearest
-// training vectors to the first query are ids 0 and 1, and the nearest to
-// the second query are ids 3 and 4.
+// training vectors to the first query are ids 0 and 1. The nearest to the
+// second query are ids 3 and 4.
 var testRows = []string{
 	"0.1,0,0,0",
 	"10,10,10,10.2",
@@ -95,7 +95,7 @@ func TestLoadDataset(t *testing.T) {
 	}
 
 	// The loaded index should find the hand-computed nearest neighbor for
-	// each query. The dataset is small enough for the tree to be exact.
+	// each query. The dataset is small, so the tree is exact.
 	for i, query := range testVectors {
 		results, err := index.Search(query, 2)
 		if err != nil {
@@ -109,8 +109,8 @@ func TestLoadDataset(t *testing.T) {
 }
 
 func TestLoadDatasetErrors(t *testing.T) {
-	// Each subtest removes one file from a complete dataset directory so
-	// that a specific loading step fails.
+	// Each subtest removes one file from a complete dataset directory.
+	// That makes one specific loading step fail.
 	files := []string{"train.csv", "test.csv", "neighbors.csv", "distances.csv"}
 	for _, missing := range files {
 		t.Run("missing "+missing, func(t *testing.T) {
@@ -143,8 +143,8 @@ func TestLoadCSV(t *testing.T) {
 
 	t.Run("skip header", func(t *testing.T) {
 		rows := append([]string{"a,b,c,d"}, trainRows...)
-		// The header contains non-numeric values, so it must be skipped
-		// for the load to succeed.
+		// The header holds non-numeric values. It must be skipped for
+		// the load to succeed.
 		path := writeFile(t, t.TempDir(), "train.csv", rows)
 		index := newTestIndex(t)
 		if err := example.LoadCSV(index, path, true); err != nil {
@@ -261,7 +261,7 @@ func TestLoadTestDataset(t *testing.T) {
 		})
 	}
 
-	// parseValue rejections surface through the loaders: an integer column
+	// parseValue errors come back through the loaders: an integer column
 	// rejects a float, and a float column rejects a non-numeric token.
 	t.Run("non-integer neighbor id", func(t *testing.T) {
 		dir := writeDataset(t, t.TempDir())

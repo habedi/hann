@@ -16,8 +16,8 @@ const (
 	benchQueries  = 100
 )
 
-// BenchmarkBuild measures constructing an index and bulk-adding the full
-// dataset, so it reports whole-build time rather than per-insert time.
+// BenchmarkBuild measures building an index and bulk-adding the full
+// dataset. It reports whole-build time rather than per-insert time.
 func BenchmarkBuild(b *testing.B) {
 	data := testutil.ClusteredData(benchSeed, benchN, benchDim, benchClusters)
 	b.ReportAllocs()
@@ -33,8 +33,8 @@ func BenchmarkBuild(b *testing.B) {
 	}
 }
 
-// BenchmarkSearch measures Search on an index built once in setup, cycling
-// through precomputed queries by iteration index.
+// BenchmarkSearch measures Search on an index built once in setup. It
+// cycles through precomputed queries by iteration index.
 func BenchmarkSearch(b *testing.B) {
 	data := testutil.ClusteredData(benchSeed, benchN, benchDim, benchClusters)
 	idx, err := hnsw.New(benchDim)

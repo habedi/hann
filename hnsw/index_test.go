@@ -13,8 +13,8 @@ import (
 	"github.com/habedi/hann/internal/testutil"
 )
 
-// newTestIndex constructs an index and fails the test when construction
-// errors, so tests with known-good parameters stay short.
+// newTestIndex builds an index and fails the test when construction
+// errors. This keeps tests with known-good parameters short.
 func newTestIndex(t *testing.T, dim int, opts ...hnsw.Option) *hnsw.Index {
 	t.Helper()
 	index, err := hnsw.New(dim, opts...)
@@ -295,8 +295,8 @@ func TestHNSWIndex_SaveLoad(t *testing.T) {
 	}
 }
 
-// testVector returns a 6-dimensional vector derived from i, spaced far
-// apart so that nearest-neighbor results are unambiguous.
+// testVector returns a 6-dimensional vector derived from i. The vectors
+// are spaced far apart, so nearest-neighbor results are unambiguous.
 func testVector(i int) []float32 {
 	base := float32(i * 100)
 	return []float32{base, base + 1, base + 2, base + 3, base + 4, base + 5}
@@ -420,9 +420,9 @@ func TestHNSWIndex_DeleteEntryPointAfterLoad(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	// Delete all ids but one; after each deletion the survivors must still
-	// be reachable, which requires the level bookkeeping to have been
-	// rebuilt by Load.
+	// Delete all ids but one. After each deletion the survivors must still
+	// be reachable. That only works when Load has rebuilt the level
+	// bookkeeping.
 	for i := 1; i <= 9; i++ {
 		if err := loaded.Delete(i); err != nil {
 			t.Fatalf("Delete(%d) failed: %v", i, err)
@@ -448,11 +448,11 @@ func TestHNSWIndex_DeleteEntryPointAfterBulkAdd(t *testing.T) {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	// Delete every id but the last, one at a time, so whichever node is the
-	// current entry point is deleted at some step. The survivors must remain
-	// reachable after each deletion, which requires BulkAdd to have
-	// maintained the level bookkeeping that Delete uses to pick a new entry
-	// point.
+	// Delete every id but the last, one at a time. This way whichever node
+	// is the current entry point is deleted at some step. The survivors
+	// must remain reachable after each deletion. That only works when
+	// BulkAdd has maintained the level bookkeeping that Delete uses to pick
+	// a new entry point.
 	for i := 1; i <= 49; i++ {
 		if err := index.Delete(i); err != nil {
 			t.Fatalf("Delete(%d) failed: %v", i, err)
@@ -477,8 +477,8 @@ func TestHNSWIndex_DeleteAfterBulkDelete(t *testing.T) {
 	}
 
 	// Bulk delete half the nodes, then delete the remaining ones one at a
-	// time. Whichever node is the entry point after BulkDelete is deleted at
-	// some step, so Delete must pick a surviving node as the new entry
+	// time. Whichever node is the entry point after BulkDelete is deleted
+	// at some step. Delete must then pick a surviving node as the new entry
 	// point, not a node that BulkDelete already removed from its level
 	// bookkeeping.
 	var deleteIDs []int
@@ -509,8 +509,8 @@ func TestHNSWIndex_DeleteAfterBulkDelete(t *testing.T) {
 
 func TestHNSWIndex_UpdateEntryPoint(t *testing.T) {
 	dim := 6
-	// Exhaustive search keeps the exact-match assertions below free of the
-	// approximation error of the greedy search.
+	// Exhaustive search removes the approximation error of the greedy
+	// search from the exact-match assertions below.
 	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(32), hnsw.WithExhaustiveSearch(true))
 	for i := 1; i <= 10; i++ {
 		if err := index.Add(i, testVector(i)); err != nil {
@@ -519,7 +519,7 @@ func TestHNSWIndex_UpdateEntryPoint(t *testing.T) {
 	}
 
 	// The entry point is not observable through the public API, so update
-	// every node in turn; whichever node is the entry point is covered.
+	// every node in turn. Whichever node is the entry point is covered.
 	locations := make(map[int]int, 10)
 	for i := 1; i <= 10; i++ {
 		locations[i] = i
@@ -547,8 +547,8 @@ func TestHNSWIndex_UpdateEntryPoint(t *testing.T) {
 
 func TestHNSWIndex_BulkUpdateGraphConsistency(t *testing.T) {
 	dim := 6
-	// Exhaustive search keeps the exact-match assertions below free of the
-	// approximation error of the greedy search.
+	// Exhaustive search removes the approximation error of the greedy
+	// search from the exact-match assertions below.
 	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(32), hnsw.WithExhaustiveSearch(true))
 	vectors := make(map[int][]float32, 20)
 	for i := 1; i <= 20; i++ {
@@ -558,8 +558,8 @@ func TestHNSWIndex_BulkUpdateGraphConsistency(t *testing.T) {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	// Move three nodes to new locations next to the others, so exact
-	// queries remain answerable by an approximate index.
+	// Move three nodes to new locations next to the others. This keeps
+	// exact queries answerable by an approximate index.
 	updates := map[int][]float32{
 		1: testVector(21),
 		2: testVector(22),
@@ -570,9 +570,9 @@ func TestHNSWIndex_BulkUpdateGraphConsistency(t *testing.T) {
 	}
 
 	// Both updated and untouched nodes must be found at their locations.
-	// Asking for every node engages the brute-force fallback, so the check
+	// Asking for every node triggers the brute-force fallback, so the check
 	// does not depend on the recall of the graph search. A corrupted graph
-	// (self-links or duplicated neighbor entries) would surface here as a
+	// (self-links or duplicated neighbor entries) would show up here as a
 	// duplicated or missing id in the full result set.
 	expected := map[int]int{1: 21, 2: 22, 3: 23}
 	for i := 1; i <= 20; i++ {
@@ -619,11 +619,11 @@ func TestHNSWIndex_SearchSingleNodeLargeK(t *testing.T) {
 
 func TestHNSWIndex_SearchFallbackChunking(t *testing.T) {
 	// The fallback path splits the unvisited nodes into chunks of
-	// ceil(len/numWorkers). When the workers overshoot the slice by more than
-	// one chunk, a worker's start index passes the slice length, which used to
-	// panic with a slice bounds error. Sweeping the index size across several
-	// multiples of the worker count hits the bad remainder on any CPU count
-	// that has one.
+	// ceil(len/numWorkers). When the workers overshoot the slice by more
+	// than one chunk, a worker's start index passes the slice length. That
+	// used to panic with a slice bounds error. Sweeping the index size
+	// across several multiples of the worker count hits the bad remainder
+	// on any CPU count that has one.
 	dim := 4
 	for n := 3; n <= 128; n++ {
 		// A small ef keeps searchLayer's result list short, so a search with
@@ -646,7 +646,7 @@ func TestHNSWIndex_SearchFallbackChunking(t *testing.T) {
 }
 
 // hnswFactory describes the HNSW index for the shared test runners. Search
-// sorts its candidates before returning, so results are sorted, and the
+// sorts its candidates before returning, so results are sorted. The
 // reported distances are computed against the stored vectors, so they are
 // exact.
 func hnswFactory() testutil.Factory {
@@ -701,12 +701,12 @@ func TestHNSWIndex_SearchArgumentErrors(t *testing.T) {
 	}
 }
 
-// TestHNSWIndex_SearchFallbackClampsK checks that a k larger than the index
-// still returns every node exactly once, in sorted order, after the
-// brute-force fallback has merged its candidates.
+// TestHNSWIndex_SearchFallbackClampsK checks a k larger than the index.
+// The search must still return every node exactly once, in sorted order,
+// after the brute-force fallback has merged its candidates.
 func TestHNSWIndex_SearchFallbackClampsK(t *testing.T) {
-	// A small ef keeps searchLayer's result list short, so the search enters
-	// the fallback and gathers the remaining nodes there.
+	// A small ef keeps searchLayer's result list short. The search then
+	// enters the fallback and gathers the remaining nodes there.
 	index := newTestIndex(t, 4, hnsw.WithM(4), hnsw.WithEf(2))
 	for i := 1; i <= 5; i++ {
 		if err := index.Add(i, []float32{float32(i), 0, 0, 0}); err != nil {
@@ -731,9 +731,10 @@ func TestHNSWIndex_SearchFallbackClampsK(t *testing.T) {
 }
 
 // TestHNSWIndex_SearchFallbackSmallShortfall checks the fallback with a
-// shortfall smaller than the number of unvisited nodes, so the per-worker
-// heaps and the merge heap must displace worse candidates instead of only
-// accumulating, and the final result must stay deduplicated and sorted.
+// shortfall smaller than the number of unvisited nodes. The per-worker
+// heaps and the merge heap must then push out worse candidates instead of
+// only collecting them. The final result must stay deduplicated and
+// sorted.
 func TestHNSWIndex_SearchFallbackSmallShortfall(t *testing.T) {
 	index := newTestIndex(t, 4, hnsw.WithM(4), hnsw.WithEf(2))
 	const n = 60
@@ -742,9 +743,9 @@ func TestHNSWIndex_SearchFallbackSmallShortfall(t *testing.T) {
 			t.Fatalf("Add(%d) failed: %v", i, err)
 		}
 	}
-	// With ef 2 the layer search returns at most 2 candidates, so k 3 leaves
-	// a shortfall of 1 that the parallel scan must fill with the single best
-	// remaining node.
+	// With ef 2 the layer search returns at most 2 candidates, so k 3
+	// leaves a shortfall of 1. The parallel scan must fill it with the
+	// single best remaining node.
 	neighbors, err := index.Search([]float32{float32(n + 1), 0, 0, 0}, 3)
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
@@ -817,8 +818,9 @@ func TestHNSWIndex_BulkDeleteUnknownID(t *testing.T) {
 	}
 }
 
-// TestHNSWIndex_BulkUpdateWrongDimension checks that a wrong-dimension vector
-// for an existing id fails the batch and the entry stays at its old location.
+// TestHNSWIndex_BulkUpdateWrongDimension checks that a wrong-dimension
+// vector for an existing id fails the batch. The entry must stay at its old
+// location.
 func TestHNSWIndex_BulkUpdateWrongDimension(t *testing.T) {
 	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10))
 	if err := index.BulkAdd(map[int][]float32{
@@ -867,7 +869,7 @@ func TestHNSWIndex_CosineOperations(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	// BulkUpdate normalizes its vectors, and its normalization loop rejects a
+	// BulkUpdate normalizes its vectors. Its normalization loop rejects a
 	// wrong-dimension row before any entry is touched.
 	if err := index.BulkUpdate(map[int][]float32{1: {1, 2}}); err == nil {
 		t.Error("expected error for a wrong-dimension vector in cosine BulkUpdate, got none")
@@ -876,7 +878,7 @@ func TestHNSWIndex_CosineOperations(t *testing.T) {
 		t.Fatalf("BulkUpdate failed: %v", err)
 	}
 
-	// Under cosine only the direction matters, so each direction must map to
+	// Under cosine only the direction matters. Each direction must map to
 	// its node regardless of the stored magnitudes.
 	cases := map[int][]float32{
 		1: {1, 0, 0, 0},
@@ -895,8 +897,9 @@ func TestHNSWIndex_CosineOperations(t *testing.T) {
 }
 
 // newFlakyIndex returns an index whose metric behaves like the Euclidean
-// distance until the returned flag is set, after which every distance call
-// fails. The flag is only flipped between operations, so it needs no locking.
+// distance until the returned flag is set. After that every distance call
+// fails. The flag is only flipped between operations, so it needs no
+// locking.
 func newFlakyIndex(t *testing.T) (*hnsw.Index, *bool) {
 	t.Helper()
 	failNow := false
@@ -915,9 +918,9 @@ func newFlakyIndex(t *testing.T) (*hnsw.Index, *bool) {
 	return index, &failNow
 }
 
-// TestHNSWIndex_MetricErrorPropagation checks that a distance failure during
-// graph maintenance is returned to the caller, and that a failed Add rolls the
-// new node back out of the index.
+// TestHNSWIndex_MetricErrorPropagation checks that a distance failure
+// during graph maintenance is returned to the caller. A failed Add must
+// roll the new node back out of the index.
 func TestHNSWIndex_MetricErrorPropagation(t *testing.T) {
 	t.Run("Add rolls back", func(t *testing.T) {
 		index, failNow := newFlakyIndex(t)
@@ -1016,10 +1019,11 @@ func TestHNSWIndex_GobDecodeErrors(t *testing.T) {
 	}
 }
 
-// legacyHNSWNode and legacyHNSWIndex mirror the on-disk shape written before
-// the HasEntryPoint, FormatVersion, and EfConstruction fields existed. The gob
-// decoder matches struct fields by name, so encoding them produces the byte
-// stream an old version of the library would have written.
+// legacyHNSWNode and legacyHNSWIndex mirror the on-disk shape written
+// before the HasEntryPoint, FormatVersion, and EfConstruction fields
+// existed. The gob decoder matches struct fields by name. Encoding them
+// therefore produces the byte stream an old version of the library would
+// have written.
 type legacyHNSWNode struct {
 	ID     int
 	Vector []float32
@@ -1054,8 +1058,8 @@ func decodeLegacyHNSW(t *testing.T, legacy legacyHNSWIndex) *hnsw.Index {
 
 // TestHNSWIndex_GobDecodeLegacyFormat checks that files written before the
 // HasEntryPoint flag existed still load: a nonzero entry point id is used
-// directly, the id 0 sentinel recovers the node with id 0, and an empty file
-// leaves the index empty.
+// directly, the id 0 sentinel recovers the node with id 0, and an empty
+// file leaves the index empty.
 func TestHNSWIndex_GobDecodeLegacyFormat(t *testing.T) {
 	t.Run("nonzero entry point", func(t *testing.T) {
 		legacy := legacyHNSWIndex{

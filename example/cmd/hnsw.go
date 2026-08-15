@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	// Using HNSW index with FashionMNIST and Glove datasets
+	// Run the HNSW index on the FashionMNIST and Glove datasets.
 	HNSWIndexFashionMNIST()
 	HNSWIndexGlove25()
 	HNSWIndexGlove200()

@@ -9,14 +9,13 @@ import (
 	"github.com/habedi/hann/core"
 )
 
-// RunExactDifferential compares an index against brute force in a
-// configuration where the index is provably exact: searching with k equal to
-// the number of stored vectors forces a complete result, so the returned ids
-// must be exactly the stored ids, in non-decreasing distance order, with each
-// rank's distance matching the brute-force ranking. This is a differential
-// test between the index's search path and independent arithmetic, so it
-// catches distance, ordering, and bookkeeping bugs that recall thresholds
-// absorb.
+// RunExactDifferential compares an index against brute force in a setting
+// where the index must be exact. Searching with k equal to the number of
+// stored vectors forces a complete result. The returned ids must be exactly
+// the stored ids, in non-decreasing distance order, and the distance at each
+// rank must match the brute-force ranking. The reference values come from
+// independent arithmetic, so the test catches distance, ordering, and
+// bookkeeping bugs that recall thresholds absorb.
 func RunExactDifferential(t *testing.T, f Factory, dim, n, numQueries int) {
 	t.Helper()
 	data := ClusteredData(21, n, dim, 8)
@@ -49,11 +48,11 @@ func RunExactDifferential(t *testing.T, f Factory, dim, n, numQueries int) {
 }
 
 // RunBulkSequentialDifferential builds one index through single-item Add and
-// Delete calls and another through BulkAdd and BulkDelete from the same data,
-// then compares the two: counts must agree, and when the factory reports
-// exact distances, complete searches on both must return identical rankings.
-// The bulk and sequential paths maintain the same state through different
-// code, which is exactly where past bookkeeping bugs lived.
+// Delete calls and another through BulkAdd and BulkDelete from the same
+// data, then compares the two. The counts must agree. When the factory
+// reports exact distances, complete searches on both must return identical
+// rankings. The bulk and sequential paths keep the same state through
+// different code, which is where past bookkeeping bugs lived.
 func RunBulkSequentialDifferential(t *testing.T, f Factory, dim, n, numQueries int) {
 	t.Helper()
 	data := ClusteredData(31, n, dim, 8)
@@ -136,14 +135,15 @@ func RunBulkSequentialDifferential(t *testing.T, f Factory, dim, n, numQueries i
 	}
 }
 
-// RunUpdateDifferential builds one index with an initial dataset and moves
-// every vector to a second dataset through Update and BulkUpdate, half each,
-// then compares it against an index built directly from the second dataset.
-// Searching with k above the index size must return each id exactly once on
-// both, which catches stale or duplicated entries the update path left
-// behind, and when the factory reports exact distances, the ranking of the
-// updated index must match the reference distances of the second dataset,
-// which catches an update that changed the bookkeeping but not the vector.
+// RunUpdateDifferential builds an index from a first dataset. It then moves
+// every vector to a second dataset, half through Update and half through
+// BulkUpdate, and compares the result against an index built directly from
+// the second dataset. A search with k above the index size must return each
+// id exactly once on both indexes. This catches stale or duplicated entries
+// left by the update path. When the factory reports exact distances, the
+// ranking of the updated index must also match the reference distances of
+// the second dataset. This catches an update that changed the bookkeeping
+// but not the vector.
 func RunUpdateDifferential(t *testing.T, f Factory, dim, n, numQueries int) {
 	t.Helper()
 	before := ClusteredData(41, n, dim, 8)
@@ -227,12 +227,12 @@ func RunUpdateDifferential(t *testing.T, f Factory, dim, n, numQueries int) {
 }
 
 // RunSaveLoadDifferential saves an index that has seen adds and deletes,
-// loads the bytes into a fresh index, and compares complete searches on the
-// two: both must return each surviving id exactly once, the distance at
-// every rank must agree between original and loaded, and when the factory
-// reports exact distances, both rankings must match the reference distances.
-// The comparison is by rank distance rather than by id, so equidistant
-// points cannot cause a spurious failure.
+// then loads the bytes into a fresh index and compares complete searches on
+// the two. Both must return each surviving id exactly once. The distance at
+// every rank must agree between the original and the loaded index. When the
+// factory reports exact distances, both rankings must also match the
+// reference distances. The comparison uses distances rather than ids, so
+// equidistant points cannot cause a false failure.
 func RunSaveLoadDifferential(t *testing.T, f Factory, dim, n, numQueries int) {
 	t.Helper()
 	data := ClusteredData(61, n, dim, 8)
@@ -245,7 +245,7 @@ func RunSaveLoadDifferential(t *testing.T, f Factory, dim, n, numQueries int) {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 	// Delete every fifth id before saving, so the serialized state includes
-	// the effect of deletions, not only pristine inserts.
+	// the effect of deletions, not only fresh inserts.
 	for id := 0; id < n; id += 5 {
 		if err := original.Delete(id); err != nil {
 			t.Fatalf("Delete(%d) failed: %v", id, err)
@@ -338,10 +338,10 @@ func rankedDistances(query []float32, data map[int][]float32, metric core.Metric
 	return out, nil
 }
 
-// compareRanking checks that a complete search result covers exactly the data
-// ids, is sorted, and matches the reference distances rank by rank. Distances
-// are compared instead of ids, so equidistant points cannot cause a spurious
-// failure.
+// compareRanking checks that a complete search result covers exactly the
+// data ids, is sorted, and matches the reference distances rank by rank.
+// Distances are compared instead of ids, so equidistant points cannot cause
+// a false failure.
 func compareRanking(results []core.Neighbor, data map[int][]float32, wantDists []float64) error {
 	if len(results) != len(data) {
 		return fmt.Errorf("got %d results, want %d", len(results), len(data))

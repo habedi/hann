@@ -6,8 +6,9 @@ import (
 	"time"
 )
 
-// GetSeed receives a seed value for random number generation from the HANN_SEED environment variable.
-// A value that does not parse as an integer is ignored, and the current time is used instead.
+// GetSeed reads a seed value for random number generation from the
+// HANN_SEED environment variable. A value that does not parse as an integer
+// is ignored, and the current time is used instead.
 func GetSeed() int64 {
 	seedStr := os.Getenv("HANN_SEED")
 	if seedStr != "" {
