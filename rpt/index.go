@@ -1,3 +1,4 @@
+// Package rpt implements the RPT index, a random projection tree.
 package rpt
 
 import (

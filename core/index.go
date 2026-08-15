@@ -1,3 +1,6 @@
+// Package core declares the Index interface the hann indexes implement,
+// together with the distance functions, the metric registry, and the
+// shared vector operations.
 package core
 
 import (

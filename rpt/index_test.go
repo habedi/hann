@@ -534,6 +534,7 @@ func TestRPTIndex_SaveLoadDistance(t *testing.T) {
 // rptFactory returns the testutil factory for the RPT index with the default
 // parameters used across these tests.
 func rptFactory(t *testing.T, dim int) testutil.Factory {
+	t.Helper()
 	return testutil.Factory{
 		New: func() core.Index {
 			return mustNew(t, dim)

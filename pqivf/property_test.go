@@ -13,7 +13,6 @@ func TestPQIVF_PropertyOps(t *testing.T) {
 	// all 64 ids in the id space are live, which happens near op 160. Five
 	// seeds give 700 ops in total.
 	for _, seed := range []int64{1, 2, 3, 4, 5} {
-		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			testutil.RunPropertyOps(t, pqivfFactory(t), 16, seed, 140)
 		})

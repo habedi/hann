@@ -32,11 +32,12 @@ var supportedCPUFeature = Fallback
 // instructions, so the AVX2 level requires both features. On arm64, every
 // CPU has NEON, so the NEON level is selected without a feature check.
 func init() {
-	if runtime.GOARCH == "arm64" {
+	switch {
+	case runtime.GOARCH == "arm64":
 		supportedCPUFeature = NEON
-	} else if cpu.X86.HasAVX2 && cpu.X86.HasFMA {
+	case cpu.X86.HasAVX2 && cpu.X86.HasFMA:
 		supportedCPUFeature = AVX2
-	} else if cpu.X86.HasAVX {
+	case cpu.X86.HasAVX:
 		supportedCPUFeature = AVX
 	}
 	C.hann_cpu_init(C.int(supportedCPUFeature))

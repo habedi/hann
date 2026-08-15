@@ -1,3 +1,5 @@
+// Package example holds the dataset loading, recall computation, and index
+// runner helpers the example programs share.
 package example
 
 import (

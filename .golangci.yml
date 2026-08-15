@@ -1,9 +1,34 @@
 version: "2"
 linters:
+  enable:
+    - copyloopvar
+    - durationcheck
+    - errname
+    - errorlint
+    - gocritic
+    - godot
+    - makezero
+    - misspell
+    - nilerr
+    - nolintlint
+    - thelper
+    - unconvert
+    - unparam
+    - wastedassign
+  settings:
+    gocritic:
+      disabled-checks:
+        # M is the HNSW paper's name for the link budget, so parameters
+        # named M keep their capital.
+        - captLocal
+    govet:
+      enable:
+        - nilness
+    staticcheck:
+      checks: ["all"]
   exclusions:
     generated: lax
     presets:
-      - comments
       - common-false-positives
       - legacy
       - std-error-handling
@@ -11,6 +36,16 @@ linters:
       - linters:
           - errcheck
         path: _test\.go
+      # Test-only constructors keep parameters for readability even when
+      # every current call passes the same value.
+      - linters:
+          - unparam
+        path: _test\.go
+      # cgo preamble comments hold C declarations, which end in a
+      # semicolon, not a period.
+      - linters:
+          - godot
+        source: ";$"
     paths:
       - example/cmd
       - third_party$

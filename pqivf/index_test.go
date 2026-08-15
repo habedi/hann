@@ -793,6 +793,7 @@ func TestPQIVF_GobDecodeLegacyPendingVectors(t *testing.T) {
 // pqivfFactory returns the factory shared by the property-based and the
 // concurrency tests.
 func pqivfFactory(t *testing.T) testutil.Factory {
+	t.Helper()
 	return testutil.Factory{
 		New: func() core.Index {
 			return newIndex(t, 16, 2, 2, 4, 5)

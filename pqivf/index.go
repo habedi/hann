@@ -1,3 +1,5 @@
+// Package pqivf implements the PQIVF index: coarse clustering into an
+// inverted file, with product quantization inside each cluster.
 package pqivf
 
 import (
@@ -153,26 +155,26 @@ func defaultNumSubquantizers(dimension int) int {
 	return 1
 }
 
-// nearestCentroid finds the closest coarse centroid to the vector. It
-// returns the centroid's index and its rank distance. The distance is only
-// used for ordering, so it stays in rank space.
-func (pq *Index) nearestCentroid(vector []float32) (int, float64, error) {
+// nearestCentroid returns the index of the closest coarse centroid to the
+// vector. The comparison uses rank distances, which order centroids exactly
+// like true distances.
+func (pq *Index) nearestCentroid(vector []float32) (int, error) {
 	if len(pq.coarseCentroids) == 0 {
-		return 0, 0, fmt.Errorf("no coarse centroids available")
+		return 0, fmt.Errorf("no coarse centroids available")
 	}
 	best := -1
 	bestDist := math.MaxFloat64
 	for i, centroid := range pq.coarseCentroids {
 		d, err := pq.metric.Rank(vector, centroid)
 		if err != nil {
-			return 0, 0, err
+			return 0, err
 		}
 		if d < bestDist {
 			bestDist = d
 			best = i
 		}
 	}
-	return best, bestDist, nil
+	return best, nil
 }
 
 // nearestCentroids returns a sorted slice of clusters with their rank
@@ -240,7 +242,7 @@ func (pq *Index) addLocked(id int, vector []float32) error {
 // without codes instead of failing the insert. The caller must hold the
 // mutex, and the index must be trained.
 func (pq *Index) assignLocked(id int, vector []float32) error {
-	cluster, _, err := pq.nearestCentroid(vector)
+	cluster, err := pq.nearestCentroid(vector)
 	if err != nil {
 		return err
 	}
@@ -481,7 +483,7 @@ func (pq *Index) Train() error {
 	pq.idToCluster = make(map[int]int)
 	pq.clusterCounts = make(map[int]int)
 	for id, vector := range allVectorsByID {
-		cluster, _, err := pq.nearestCentroid(vector)
+		cluster, err := pq.nearestCentroid(vector)
 		if err != nil {
 			return err
 		}
