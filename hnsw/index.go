@@ -80,11 +80,80 @@ func (h *candidateMaxHeap) Pop() interface{} {
 
 // node represents a vector in the HNSW graph along with its links.
 type node struct {
+	mu           sync.Mutex      // guards Links and ReverseLinks during a parallel BulkAdd
 	ID           int             // unique identifier of the node
 	Vector       []float32       // vector data
 	Level        int             // node level in the hierarchy
 	Links        map[int][]*node // links to neighbors at each level
 	ReverseLinks map[int][]*node // reverse links from neighbors
+}
+
+// bulkState carries the shared synchronization state for the parallel phase
+// of BulkAdd. It exists only while BulkAdd holds the index write lock, so
+// external readers never run concurrently with it. A nil *bulkState selects
+// the sequential path everywhere, which behaves exactly like the
+// single-item operations.
+type bulkState struct {
+	epMu sync.Mutex // guards entryPoint and maxLevel between inserters
+}
+
+// containsNode reports whether the list holds the target.
+func containsNode(list []*node, target *node) bool {
+	for _, n := range list {
+		if n == target {
+			return true
+		}
+	}
+	return false
+}
+
+// neighborList returns a node's neighbors at a level. The sequential path
+// returns the live slice. The parallel path returns a copy taken under the
+// node's lock, because a concurrent trim can rewrite the live slice in
+// place.
+func (h *Index) neighborList(n *node, level int, par *bulkState) []*node {
+	if par == nil {
+		return n.Links[level]
+	}
+	n.mu.Lock()
+	links := append([]*node(nil), n.Links[level]...)
+	n.mu.Unlock()
+	return links
+}
+
+// linkLen returns the number of neighbors a node has at a level.
+func (h *Index) linkLen(n *node, level int, par *bulkState) int {
+	if par == nil {
+		return len(n.Links[level])
+	}
+	n.mu.Lock()
+	length := len(n.Links[level])
+	n.mu.Unlock()
+	return length
+}
+
+// addEdge records the directed edge from one node to another, on both sides
+// of the bookkeeping. The parallel path takes one node lock at a time, so
+// no inserter ever holds two locks, and it skips an edge that a concurrent
+// inserter already created. A trim that interleaves between the two halves
+// can leave a reverse record without a matching link. That is tolerated:
+// every reader of reverse links treats a record without a link as a no-op.
+func (h *Index) addEdge(from, to *node, level int, par *bulkState) {
+	if par == nil {
+		from.Links[level] = append(from.Links[level], to)
+		to.ReverseLinks[level] = append(to.ReverseLinks[level], from)
+		return
+	}
+	from.mu.Lock()
+	if containsNode(from.Links[level], to) {
+		from.mu.Unlock()
+		return
+	}
+	from.Links[level] = append(from.Links[level], to)
+	from.mu.Unlock()
+	to.mu.Lock()
+	to.ReverseLinks[level] = append(to.ReverseLinks[level], from)
+	to.mu.Unlock()
 }
 
 // Index is the HNSW graph index. Create it with New. The zero value is
@@ -456,19 +525,31 @@ func difference(a, b []*node) []*node {
 
 // trimNeighborLinks cuts a node's neighbors at a level down to at most M.
 // The kept neighbors are chosen by the neighbor selection heuristic over
-// the current links.
-func trimNeighborLinks(n *node, level, M int, distance core.DistanceFunc) error {
+// the current links. The parallel path holds the node's lock for the whole
+// selection, so the choice is made against a consistent list, and it takes
+// the removed nodes' locks one at a time afterward, so no two locks are
+// ever held together.
+func trimNeighborLinks(n *node, level, M int, distance core.DistanceFunc, par *bulkState) error {
+	if par != nil {
+		n.mu.Lock()
+	}
 	original := n.Links[level]
 	cands := make([]candidate, len(original))
 	for i, nb := range original {
 		d, err := distance(n.Vector, nb.Vector)
 		if err != nil {
+			if par != nil {
+				n.mu.Unlock()
+			}
 			return err
 		}
 		cands[i] = candidate{nb, d}
 	}
 	selected, err := selectNeighborsHeuristic(cands, M, distance)
 	if err != nil {
+		if par != nil {
+			n.mu.Unlock()
+		}
 		return err
 	}
 	trimmed := make([]*node, len(selected))
@@ -476,10 +557,19 @@ func trimNeighborLinks(n *node, level, M int, distance core.DistanceFunc) error 
 		trimmed[i] = c.node
 	}
 	removed := difference(original, trimmed)
-	for _, r := range removed {
-		r.ReverseLinks[level] = removeFromSlice(r.ReverseLinks[level], n)
-	}
 	n.Links[level] = trimmed
+	if par != nil {
+		n.mu.Unlock()
+	}
+	for _, r := range removed {
+		if par != nil {
+			r.mu.Lock()
+		}
+		r.ReverseLinks[level] = removeFromSlice(r.ReverseLinks[level], n)
+		if par != nil {
+			r.mu.Unlock()
+		}
+	}
 	return nil
 }
 
@@ -548,11 +638,17 @@ func (h *Index) rollbackInsert(n *node) {
 }
 
 // insertNode adds a node into the HNSW graph, updating links as needed.
-func (h *Index) insertNode(n *node, searchEf int) error {
+func (h *Index) insertNode(n *node, searchEf int, par *bulkState) error {
+	if par != nil {
+		par.epMu.Lock()
+	}
 	// If index is empty, set this node as entry point.
 	if h.entryPoint == nil {
 		h.entryPoint = n
 		h.maxLevel = n.Level
+		if par != nil {
+			par.epMu.Unlock()
+		}
 		return nil
 	}
 	// Seed the search from the current entry point before it may change.
@@ -563,12 +659,16 @@ func (h *Index) insertNode(n *node, searchEf int) error {
 		h.entryPoint = n
 		h.maxLevel = n.Level
 	}
+	top := h.maxLevel
+	if par != nil {
+		par.epMu.Unlock()
+	}
 	// Navigate the graph from the top level down to the node's level.
-	for L := h.maxLevel; L > n.Level; L-- {
+	for L := top; L > n.Level; L-- {
 		changed := true
 		for changed {
 			changed = false
-			for _, neighbor := range current.Links[L] {
+			for _, neighbor := range h.neighborList(current, L, par) {
 				distNeighbor, err := h.metric.Rank(n.Vector, neighbor.Vector)
 				if err != nil {
 					return err
@@ -585,8 +685,8 @@ func (h *Index) insertNode(n *node, searchEf int) error {
 		}
 	}
 	// For each level where the new node will be inserted.
-	for L := minInt(n.Level, h.maxLevel); L >= 0; L-- {
-		candList, err := h.searchLayer(n.Vector, current, L, searchEf, h.metric.Rank)
+	for L := minInt(n.Level, top); L >= 0; L-- {
+		candList, err := h.searchLayer(n.Vector, current, L, searchEf, h.metric.Rank, par)
 		if err != nil {
 			return err
 		}
@@ -594,22 +694,25 @@ func (h *Index) insertNode(n *node, searchEf int) error {
 		if err != nil {
 			return err
 		}
-		selectedNodes := make([]*node, len(selectedCands))
-		for i, cand := range selectedCands {
-			selectedNodes[i] = cand.node
-		}
-		n.Links[L] = selectedNodes
-		// Update neighbor links to include the new node.
-		for _, neighbor := range selectedNodes {
-			neighbor.Links[L] = append(neighbor.Links[L], n)
-			neighbor.ReverseLinks[L] = append(neighbor.ReverseLinks[L], n)
-			// Record the backlink so that removeNodeLinks can later remove n
-			// from the neighbor's links.
-			n.ReverseLinks[L] = append(n.ReverseLinks[L], neighbor)
-			if len(neighbor.Links[L]) > h.m {
-				if err := trimNeighborLinks(neighbor, L, h.m, h.metric.Rank); err != nil {
+		// Wire both directions of every selected edge. The backlink records
+		// let removeNodeLinks later remove n from the neighbor's links.
+		for _, cand := range selectedCands {
+			neighbor := cand.node
+			h.addEdge(n, neighbor, L, par)
+			h.addEdge(neighbor, n, L, par)
+			if h.linkLen(neighbor, L, par) > h.m {
+				if err := trimNeighborLinks(neighbor, L, h.m, h.metric.Rank, par); err != nil {
 					return err
 				}
+			}
+		}
+		// The new node's own list needs the same cap check: concurrent
+		// inserters append backlinks to it while its selected edges are
+		// wired, so the unchecked appends above can push it past M. With no
+		// concurrency the selected edges alone never exceed M.
+		if h.linkLen(n, L, par) > h.m {
+			if err := trimNeighborLinks(n, L, h.m, h.metric.Rank, par); err != nil {
+				return err
 			}
 		}
 		// Move the current pointer for the next level.
@@ -621,7 +724,7 @@ func (h *Index) insertNode(n *node, searchEf int) error {
 }
 
 // searchLayer performs a search in the graph at a given level.
-func (h *Index) searchLayer(query []float32, entrypoint *node, level int, ef int, distance core.DistanceFunc) ([]candidate, error) {
+func (h *Index) searchLayer(query []float32, entrypoint *node, level int, ef int, distance core.DistanceFunc, par *bulkState) ([]candidate, error) {
 	visited := map[int]bool{entrypoint.ID: true}
 	d0, err := distance(query, entrypoint.Vector)
 	if err != nil {
@@ -639,7 +742,7 @@ func (h *Index) searchLayer(query []float32, entrypoint *node, level int, ef int
 			break
 		}
 		heap.Pop(&candQueue)
-		for _, neighbor := range current.node.Links[level] {
+		for _, neighbor := range h.neighborList(current.node, level, par) {
 			if visited[neighbor.ID] {
 				continue
 			}
@@ -700,7 +803,7 @@ func (h *Index) Add(id int, vector []float32) error {
 		h.nodesByLevel[level] = make(map[int]struct{})
 	}
 	h.nodesByLevel[level][id] = struct{}{}
-	if err := h.insertNode(newNode, h.efConstruction); err != nil {
+	if err := h.insertNode(newNode, h.efConstruction, nil); err != nil {
 		h.rollbackInsert(newNode)
 		return err
 	}
@@ -783,7 +886,7 @@ func (h *Index) reinsertLocked(n *node, vector []float32) error {
 		h.maxLevel = n.Level
 		return nil
 	}
-	if err := h.insertNode(n, h.efConstruction); err != nil {
+	if err := h.insertNode(n, h.efConstruction, nil); err != nil {
 		// Unlink whatever the failed reinsertion wired, then put the old
 		// vector and the old links back on both sides of every edge.
 		h.removeNodeLinks(n)
@@ -827,7 +930,10 @@ func (h *Index) Update(id int, vector []float32) error {
 	return h.reinsertLocked(n, vector)
 }
 
-// BulkAdd inserts multiple vectors into the index at once.
+// BulkAdd inserts multiple vectors into the index at once. The nodes are
+// inserted concurrently while the call holds the index write lock, so the
+// graph layout varies between runs, like it already did through map
+// iteration order. Search quality is unaffected.
 func (h *Index) BulkAdd(vectors map[int][]float32) error {
 	// Normalize vectors in batch when the metric requires it.
 	if h.metric.Normalizes() {
@@ -871,30 +977,96 @@ func (h *Index) BulkAdd(vectors map[int][]float32) error {
 	})
 	bulkEf := h.efConstruction
 
+	// Register every node up front, so the parallel phase below never
+	// writes the index maps. An unwired node is invisible to the graph
+	// walks, because nothing links to it yet.
 	for _, newNode := range nodesSlice {
 		h.nodes[newNode.ID] = newNode
 		if _, ok := h.nodesByLevel[newNode.Level]; !ok {
 			h.nodesByLevel[newNode.Level] = make(map[int]struct{})
 		}
 		h.nodesByLevel[newNode.Level][newNode.ID] = struct{}{}
-		if h.entryPoint == nil {
-			h.entryPoint = newNode
-			h.maxLevel = newNode.Level
-		} else {
-			if newNode.Level > h.maxLevel {
-				h.entryPoint = newNode
-				h.maxLevel = newNode.Level
+	}
+	rest := nodesSlice
+	if h.entryPoint == nil && len(rest) > 0 {
+		// Seed an empty index with the highest-level node, so every
+		// concurrent inserter has an entry point to descend from.
+		h.entryPoint = rest[0]
+		h.maxLevel = rest[0].Level
+		rest = rest[1:]
+	}
+	if len(rest) == 0 {
+		return nil
+	}
+
+	// Insert the nodes concurrently. The index write lock is held for the
+	// whole call, so only these workers touch the graph, synchronized by
+	// the per-node locks. The graph layout depends on how the insertions
+	// interleave, like it already depended on map iteration order above.
+	par := &bulkState{}
+	numWorkers := runtime.NumCPU()
+	if numWorkers > len(rest) {
+		numWorkers = len(rest)
+	}
+	var (
+		next     atomic.Int64
+		stop     atomic.Bool
+		errMu    sync.Mutex
+		firstErr error
+	)
+	status := make([]atomic.Int32, len(rest)) // 0 not attempted, 1 inserted, 2 failed
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(rest) || stop.Load() {
+					return
+				}
+				if err := h.insertNode(rest[i], bulkEf, par); err != nil {
+					status[i].Store(2)
+					errMu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					errMu.Unlock()
+					stop.Store(true)
+					return
+				}
+				status[i].Store(1)
 			}
-			if err := h.insertNode(newNode, bulkEf); err != nil {
-				// The failing element rolls back like a failed Add. The
-				// elements inserted before it stay, which matches applying
-				// Add to every element in turn.
-				h.rollbackInsert(newNode)
-				return err
+		}()
+	}
+	wg.Wait()
+	if firstErr == nil {
+		return nil
+	}
+	// The nodes never attempted leave the maps again first: they have no
+	// links, and removing them before the rollbacks keeps resetEntryPoint
+	// from picking an unwired node.
+	for i, newNode := range rest {
+		if status[i].Load() != 0 {
+			continue
+		}
+		delete(h.nodes, newNode.ID)
+		if level, ok := h.nodesByLevel[newNode.Level]; ok {
+			delete(level, newNode.ID)
+			if len(level) == 0 {
+				delete(h.nodesByLevel, newNode.Level)
 			}
 		}
 	}
-	return nil
+	// A failing element rolls back like a failed Add. The elements inserted
+	// before the failure stay, which matches applying Add to every element
+	// in turn.
+	for i, newNode := range rest {
+		if status[i].Load() == 2 {
+			h.rollbackInsert(newNode)
+		}
+	}
+	return firstErr
 }
 
 // BulkDelete removes multiple nodes from the index.
@@ -1019,7 +1191,7 @@ func (h *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 		}
 	}
 	// Search in the base layer (level 0) for candidates.
-	candidates, err := h.searchLayer(query, current, 0, h.ef, h.metric.Rank)
+	candidates, err := h.searchLayer(query, current, 0, h.ef, h.metric.Rank, nil)
 	if err != nil {
 		return nil, err
 	}
