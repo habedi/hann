@@ -204,3 +204,12 @@ func TestHNSWIndex_FallbackReturnsTrueTopK(t *testing.T) {
 		t.Fatalf("expected every query to use the fallback, got %d of 50", fb)
 	}
 }
+
+// TestHNSWIndex_BulkAddLargeExactness bulk-adds enough vectors to spread
+// across many insertion workers, then requires complete searches to return
+// the exact brute-force ranking. This guards the concurrent insertion path:
+// a lost edge cannot hide, because a complete search covers every node, and
+// a corrupted link structure surfaces as a wrong ranking or a wrong count.
+func TestHNSWIndex_BulkAddLargeExactness(t *testing.T) {
+	testutil.RunExactDifferential(t, hnswFactory(), 16, 4000, 5)
+}
