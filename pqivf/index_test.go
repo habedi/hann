@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"math"
+	"math/rand"
 	"strings"
 	"testing"
 
@@ -993,5 +995,167 @@ func TestPQIVF_BulkDeleteDoesNotReorderInput(t *testing.T) {
 	}
 	if ids[0] != 3 || ids[1] != 1 || ids[2] != 2 {
 		t.Errorf("BulkDelete reordered the caller's slice to %v", ids)
+	}
+}
+
+// TestPQIVF_AssignPointsMatchesSequentialScan compares the parallel
+// assignment of points to centroids against a sequential scan written out
+// in this test. Both must pick the same centroid for every point, including
+// the lowest index on a distance tie, on this machine's SIMD path.
+func TestPQIVF_AssignPointsMatchesSequentialScan(t *testing.T) {
+	rng := rand.New(rand.NewSource(3))
+	for _, tc := range []struct{ n, dim, k int }{
+		{1, 4, 1},
+		{7, 8, 3},
+		{500, 16, 8},
+		{1000, 32, 129},
+	} {
+		data := make([][]float32, tc.n)
+		for i := range data {
+			v := make([]float32, tc.dim)
+			for j := range v {
+				v[j] = float32(rng.NormFloat64())
+			}
+			data[i] = v
+		}
+		centroids := make([][]float32, tc.k)
+		for i := range centroids {
+			v := make([]float32, tc.dim)
+			for j := range v {
+				v[j] = float32(rng.NormFloat64())
+			}
+			centroids[i] = v
+		}
+		got, err := pqivf.AssignPoints(data, centroids)
+		if err != nil {
+			t.Fatalf("n=%d k=%d: AssignPoints failed: %v", tc.n, tc.k, err)
+		}
+		if len(got) != tc.n {
+			t.Fatalf("n=%d k=%d: got %d assignments", tc.n, tc.k, len(got))
+		}
+		for p, point := range data {
+			best := -1
+			bestDist := math.MaxFloat64
+			for i, cent := range centroids {
+				d, err := core.Euclidean.Rank(point, cent)
+				if err != nil {
+					t.Fatalf("reference distance failed: %v", err)
+				}
+				if d < bestDist {
+					bestDist = d
+					best = i
+				}
+			}
+			if got[p] != best {
+				t.Fatalf("n=%d k=%d: point %d assigned to %d, sequential scan picks %d",
+					tc.n, tc.k, p, got[p], best)
+			}
+		}
+	}
+
+	// Duplicate centroids tie on every point; the lowest index must win.
+	dup := []float32{1, 2, 3, 4}
+	centroids := [][]float32{append([]float32(nil), dup...), append([]float32(nil), dup...)}
+	got, err := pqivf.AssignPoints([][]float32{{0, 0, 0, 0}}, centroids)
+	if err != nil {
+		t.Fatalf("AssignPoints with duplicate centroids failed: %v", err)
+	}
+	if got[0] != 0 {
+		t.Errorf("tie broke to centroid %d, want the lowest index 0", got[0])
+	}
+}
+
+// TestPQIVF_TrainStoresEntriesInAscendingIDOrder checks that Train fills
+// every inverted list in ascending id order. Train used to follow map
+// iteration order, which changes from run to run and leaks into the
+// codebook training, so a run with HANN_SEED set was not reproducible.
+func TestPQIVF_TrainStoresEntriesInAscendingIDOrder(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	rng := rand.New(rand.NewSource(5))
+	idx := newIndex(t, 16, 8, 2, 4, 5)
+	vectors := make(map[int][]float32, 500)
+	for id := 0; id < 500; id++ {
+		v := make([]float32, 16)
+		for j := range v {
+			v[j] = float32(rng.NormFloat64())
+		}
+		vectors[id] = v
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+	for cluster, ids := range pqivf.InvertedIDs(idx) {
+		for i := 1; i < len(ids); i++ {
+			if ids[i] <= ids[i-1] {
+				t.Fatalf("cluster %d holds ids out of order: %d after %d", cluster, ids[i], ids[i-1])
+			}
+		}
+	}
+}
+
+// TestPQIVF_EncodeVectorMatchesSequentialScan compares the encoding of a
+// vector against a sequential scan over the codebooks written out in this
+// test. Both must pick the same code for every subquantizer, including the
+// lowest code on a distance tie, on this machine's SIMD path.
+func TestPQIVF_EncodeVectorMatchesSequentialScan(t *testing.T) {
+	t.Setenv("HANN_SEED", "42")
+	rng := rand.New(rand.NewSource(6))
+	dim := 16
+	idx := newIndex(t, dim, 4, 4, 8, 5)
+	vectors := make(map[int][]float32, 200)
+	for id := 0; id < 200; id++ {
+		v := make([]float32, dim)
+		for j := range v {
+			v[j] = float32(rng.NormFloat64())
+		}
+		vectors[id] = v
+	}
+	if err := idx.BulkAdd(vectors); err != nil {
+		t.Fatalf("BulkAdd failed: %v", err)
+	}
+	if err := idx.Train(); err != nil {
+		t.Fatalf("Train failed: %v", err)
+	}
+
+	codebooks := pqivf.Codebooks(idx)
+	centroids := pqivf.CoarseCentroids(idx)
+	subDim := dim / 4
+	for trial := 0; trial < 50; trial++ {
+		v := make([]float32, dim)
+		for j := range v {
+			v[j] = float32(rng.NormFloat64())
+		}
+		for cluster := range centroids {
+			got, err := pqivf.EncodeVector(idx, v, cluster)
+			if err != nil {
+				t.Fatalf("EncodeVector failed: %v", err)
+			}
+			residual := make([]float32, dim)
+			for j := range v {
+				residual[j] = v[j] - centroids[cluster][j]
+			}
+			for s := 0; s < 4; s++ {
+				sub := residual[s*subDim : (s+1)*subDim]
+				best := -1
+				bestDist := math.MaxFloat64
+				for c, cent := range codebooks[s] {
+					d, err := core.Euclidean.Rank(sub, cent)
+					if err != nil {
+						t.Fatalf("reference distance failed: %v", err)
+					}
+					if d < bestDist {
+						bestDist = d
+						best = c
+					}
+				}
+				if got[s] != best {
+					t.Fatalf("trial %d cluster %d sub %d: code %d, sequential scan picks %d",
+						trial, cluster, s, got[s], best)
+				}
+			}
+		}
 	}
 }

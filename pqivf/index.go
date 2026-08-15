@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -466,9 +467,17 @@ func (pq *Index) Train() error {
 		return fmt.Errorf("not enough vectors (%d) to train coarse quantizer with %d clusters", len(allVectorsByID), pq.coarseK)
 	}
 
-	var allVectors [][]float32
-	for _, v := range allVectorsByID {
-		allVectors = append(allVectors, v)
+	// Lay the vectors out in ascending id order. Training then does not
+	// depend on map iteration order, so a run with HANN_SEED set reproduces
+	// the same centroids, codebooks, and entry order.
+	ids := make([]int, 0, len(allVectorsByID))
+	for id := range allVectorsByID {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	allVectors := make([][]float32, len(ids))
+	for i, id := range ids {
+		allVectors[i] = allVectorsByID[id]
 	}
 
 	// Train coarse centroids using k-means on all available vectors.
@@ -478,18 +487,21 @@ func (pq *Index) Train() error {
 	}
 	pq.coarseCentroids = coarseCentroids
 
-	// Re-assign all vectors to the new coarse centroids.
+	// Re-assign all vectors to the new coarse centroids, in parallel. The
+	// index metric is always Euclidean, which is the metric assignPoints
+	// computes with.
+	assign, err := assignPoints(allVectors, coarseCentroids)
+	if err != nil {
+		return err
+	}
 	pq.invertedLists = make(map[int][]pqEntry)
 	pq.idToCluster = make(map[int]int)
 	pq.clusterCounts = make(map[int]int)
-	for id, vector := range allVectorsByID {
-		cluster, err := pq.nearestCentroid(vector)
-		if err != nil {
-			return err
-		}
+	for i, id := range ids {
+		cluster := assign[i]
 		pq.idToCluster[id] = cluster
 		pq.clusterCounts[cluster]++
-		entry := pqEntry{ID: id, Vector: vector, Cluster: cluster}
+		entry := pqEntry{ID: id, Vector: allVectors[i], Cluster: cluster}
 		pq.invertedLists[cluster] = append(pq.invertedLists[cluster], entry)
 	}
 
@@ -502,14 +514,21 @@ func (pq *Index) Train() error {
 		return nil
 	}
 
-	// Prepare data for subquantizer training by computing residuals.
+	// Prepare data for subquantizer training by computing residuals. The
+	// clusters are visited in ascending order, so the codebook training
+	// sees the same data order on every run.
+	clusters := make([]int, 0, len(pq.invertedLists))
+	for cluster := range pq.invertedLists {
+		clusters = append(clusters, cluster)
+	}
+	sort.Ints(clusters)
 	dataPerSub := make([][][]float32, pq.numSubquantizers)
 	for i := 0; i < pq.numSubquantizers; i++ {
 		dataPerSub[i] = make([][]float32, 0)
 	}
-	for cluster, entries := range pq.invertedLists {
+	for _, cluster := range clusters {
 		centroid := pq.coarseCentroids[cluster]
-		for _, entry := range entries {
+		for _, entry := range pq.invertedLists[cluster] {
 			residual, err := vectorSub(entry.Vector, centroid)
 			if err != nil {
 				return err
@@ -532,15 +551,52 @@ func (pq *Index) Train() error {
 	}
 	pq.codebooks = codebooks
 
-	// Re-encode all entries with the new codebooks.
-	for cluster, entries := range pq.invertedLists {
-		for j, entry := range entries {
-			codes, err := pq.encodeVector(entry.Vector, cluster)
-			if err != nil {
-				return err
+	// Re-encode all entries with the new codebooks, in parallel. Every
+	// entry is encoded independently, and each worker writes only its own
+	// entries, so the result does not depend on the worker count.
+	type slot struct{ cluster, index int }
+	slots := make([]slot, 0, len(pq.idToCluster))
+	for _, cluster := range clusters {
+		for j := range pq.invertedLists[cluster] {
+			slots = append(slots, slot{cluster: cluster, index: j})
+		}
+	}
+	flat := flattenCodebooks(codebooks)
+	numWorkers := runtime.NumCPU()
+	if numWorkers > len(slots) {
+		numWorkers = len(slots)
+	}
+	chunk := (len(slots) + numWorkers - 1) / numWorkers
+	errs := make([]error, numWorkers)
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		start := w * chunk
+		if start >= len(slots) {
+			break
+		}
+		end := start + chunk
+		if end > len(slots) {
+			end = len(slots)
+		}
+		wg.Add(1)
+		go func(w, start, end int) {
+			defer wg.Done()
+			out := make([]float64, maxCodebookLen(codebooks))
+			for s := start; s < end; s++ {
+				entry := &pq.invertedLists[slots[s].cluster][slots[s].index]
+				codes, err := pq.encodeWithCodebooks(entry.Vector, entry.Cluster, flat, out)
+				if err != nil {
+					errs[w] = err
+					return
+				}
+				entry.Codes = codes
 			}
-			entry.Codes = codes
-			pq.invertedLists[cluster][j] = entry
+		}(w, start, end)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
 		}
 	}
 
@@ -548,11 +604,41 @@ func (pq *Index) Train() error {
 	return nil
 }
 
-// encodeVector computes the PQ codes for a vector given its coarse cluster.
-func (pq *Index) encodeVector(vector []float32, cluster int) ([]int, error) {
-	if pq.codebooks == nil {
-		return nil, fmt.Errorf("codebooks not trained")
+// flattenCodebooks lays each subquantizer's codebook out as one flat
+// buffer, so a batch distance call can scan a whole codebook at once.
+func flattenCodebooks(codebooks [][][]float32) [][]float32 {
+	flat := make([][]float32, len(codebooks))
+	for i, codebook := range codebooks {
+		if len(codebook) == 0 {
+			continue
+		}
+		buf := make([]float32, 0, len(codebook)*len(codebook[0]))
+		for _, centroid := range codebook {
+			buf = append(buf, centroid...)
+		}
+		flat[i] = buf
 	}
+	return flat
+}
+
+// maxCodebookLen returns the size of the largest codebook, which is the
+// distance buffer capacity encodeWithCodebooks needs.
+func maxCodebookLen(codebooks [][][]float32) int {
+	longest := 0
+	for _, codebook := range codebooks {
+		if len(codebook) > longest {
+			longest = len(codebook)
+		}
+	}
+	return longest
+}
+
+// encodeWithCodebooks computes the PQ codes for a vector given its coarse
+// cluster, pre-flattened codebooks, and a distance buffer with capacity for
+// the largest codebook. Each subquantizer's scan is one batch call, and the
+// batch kernel computes each pair exactly like the per-pair kernel, with a
+// distance tie breaking to the lowest code.
+func (pq *Index) encodeWithCodebooks(vector []float32, cluster int, flat [][]float32, out []float64) ([]int, error) {
 	residual, err := vectorSub(vector, pq.coarseCentroids[cluster])
 	if err != nil {
 		return nil, err
@@ -560,24 +646,32 @@ func (pq *Index) encodeVector(vector []float32, cluster int) ([]int, error) {
 	subVecs := splitVector(residual, pq.numSubquantizers)
 	codes := make([]int, pq.numSubquantizers)
 	for i, sub := range subVecs {
-		best := -1
-		bestDist := math.MaxFloat64
-		for j, cent := range pq.codebooks[i] {
-			d, err := core.Euclidean.Rank(sub, cent)
-			if err != nil {
-				return nil, err
-			}
-			if d < bestDist {
-				bestDist = d
+		k := len(pq.codebooks[i])
+		if k == 0 {
+			return nil, fmt.Errorf("failed to encode sub-vector")
+		}
+		dists := out[:k]
+		if err := core.Euclidean.RankBatch(sub, flat[i], dists); err != nil {
+			return nil, err
+		}
+		best := 0
+		for j := 1; j < k; j++ {
+			if dists[j] < dists[best] {
 				best = j
 			}
-		}
-		if best < 0 {
-			return nil, fmt.Errorf("failed to encode sub-vector")
 		}
 		codes[i] = best
 	}
 	return codes, nil
+}
+
+// encodeVector computes the PQ codes for a vector given its coarse cluster.
+func (pq *Index) encodeVector(vector []float32, cluster int) ([]int, error) {
+	if pq.codebooks == nil {
+		return nil, fmt.Errorf("codebooks not trained")
+	}
+	out := make([]float64, maxCodebookLen(pq.codebooks))
+	return pq.encodeWithCodebooks(vector, cluster, flattenCodebooks(pq.codebooks), out)
 }
 
 // decodePQCode reconstructs an approximate residual from the PQ codes.
@@ -633,7 +727,71 @@ func splitVector(vec []float32, numParts int) [][]float32 {
 	return parts
 }
 
-// runKMeans runs a basic k-means clustering on the provided data.
+// assignPoints returns, for every point, the index of the nearest centroid,
+// with the lowest index winning a distance tie. The points are split into
+// contiguous chunks and assigned in parallel: each worker writes only its
+// own chunk, and a point's assignment does not depend on any other point,
+// so the result is identical to a sequential scan. Each worker computes the
+// distances from one point to every centroid in a single batch call over a
+// flat copy of the centroids, and the batch kernel computes each pair
+// exactly like the per-pair kernel.
+func assignPoints(data, centroids [][]float32) ([]int, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	flat := make([]float32, 0, len(centroids)*len(centroids[0]))
+	for _, centroid := range centroids {
+		flat = append(flat, centroid...)
+	}
+	assign := make([]int, len(data))
+	numWorkers := runtime.NumCPU()
+	if numWorkers > len(data) {
+		numWorkers = len(data)
+	}
+	chunk := (len(data) + numWorkers - 1) / numWorkers
+	errs := make([]error, numWorkers)
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		start := w * chunk
+		if start >= len(data) {
+			break
+		}
+		end := start + chunk
+		if end > len(data) {
+			end = len(data)
+		}
+		wg.Add(1)
+		go func(w, start, end int) {
+			defer wg.Done()
+			out := make([]float64, len(centroids))
+			for p := start; p < end; p++ {
+				if err := core.Euclidean.RankBatch(data[p], flat, out); err != nil {
+					errs[w] = err
+					return
+				}
+				best := 0
+				for i := 1; i < len(out); i++ {
+					if out[i] < out[best] {
+						best = i
+					}
+				}
+				assign[p] = best
+			}
+		}(w, start, end)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return assign, nil
+}
+
+// runKMeans runs a basic k-means clustering on the provided data. The
+// assignment step runs in parallel through assignPoints. The centroid sums
+// accumulate in point order, exactly like a sequential pass, so the result
+// does not depend on the worker count.
 func runKMeans(data [][]float32, k int, iterations int) ([][]float32, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("no data for k-means training")
@@ -641,54 +799,47 @@ func runKMeans(data [][]float32, k int, iterations int) ([][]float32, error) {
 	if len(data) < k {
 		k = len(data)
 	}
+	dim := len(data[0])
 	centroids := make([][]float32, k)
 	seededRandMu.Lock()
 	perm := seededRand.Perm(len(data))
 	seededRandMu.Unlock()
 	for i := 0; i < k; i++ {
-		centroids[i] = make([]float32, len(data[0]))
+		centroids[i] = make([]float32, dim)
 		copy(centroids[i], data[perm[i]])
 	}
 	for iter := 0; iter < iterations; iter++ {
-		clusters := make([][][]float32, k)
-		for i := range clusters {
-			clusters[i] = make([][]float32, 0)
+		assign, err := assignPoints(data, centroids)
+		if err != nil {
+			return nil, err
 		}
-		for _, point := range data {
-			best := -1
-			bestDist := math.MaxFloat64
-			for i, cent := range centroids {
-				d, err := core.Euclidean.Rank(point, cent)
-				if err != nil {
-					return nil, err
-				}
-				if d < bestDist {
-					bestDist = d
-					best = i
-				}
+		sums := make([][]float32, k)
+		counts := make([]int, k)
+		for i := range sums {
+			sums[i] = make([]float32, dim)
+		}
+		for p, point := range data {
+			cluster := assign[p]
+			counts[cluster]++
+			sum := sums[cluster]
+			for j, v := range point {
+				sum[j] += v
 			}
-			clusters[best] = append(clusters[best], point)
 		}
-		for i, clusterData := range clusters {
-			if len(clusterData) == 0 {
+		for i := 0; i < k; i++ {
+			if counts[i] == 0 {
 				// If a cluster is empty, reinitialize its centroid randomly.
 				seededRandMu.Lock()
 				index := seededRand.Intn(len(data))
 				seededRandMu.Unlock()
-				newCentroid := make([]float32, len(data[0]))
+				newCentroid := make([]float32, dim)
 				copy(newCentroid, data[index])
 				centroids[i] = newCentroid
 			} else {
-				newCentroid := make([]float32, len(data[0]))
-				for _, point := range clusterData {
-					for j, v := range point {
-						newCentroid[j] += v
-					}
+				for j := range sums[i] {
+					sums[i][j] /= float32(counts[i])
 				}
-				for j := range newCentroid {
-					newCentroid[j] /= float32(len(clusterData))
-				}
-				centroids[i] = newCentroid
+				centroids[i] = sums[i]
 			}
 		}
 	}
