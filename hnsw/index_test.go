@@ -730,6 +730,46 @@ func TestHNSWIndex_SearchFallbackClampsK(t *testing.T) {
 	}
 }
 
+// TestHNSWIndex_SearchFallbackSmallShortfall checks the fallback with a
+// shortfall smaller than the number of unvisited nodes, so the per-worker
+// heaps and the merge heap must displace worse candidates instead of only
+// accumulating, and the final result must stay deduplicated and sorted.
+func TestHNSWIndex_SearchFallbackSmallShortfall(t *testing.T) {
+	index := newTestIndex(t, 4, hnsw.WithM(4), hnsw.WithEf(2))
+	const n = 60
+	for i := 1; i <= n; i++ {
+		if err := index.Add(i, []float32{float32(i), 0, 0, 0}); err != nil {
+			t.Fatalf("Add(%d) failed: %v", i, err)
+		}
+	}
+	// With ef 2 the layer search returns at most 2 candidates, so k 3 leaves
+	// a shortfall of 1 that the parallel scan must fill with the single best
+	// remaining node.
+	neighbors, err := index.Search([]float32{float32(n + 1), 0, 0, 0}, 3)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(neighbors) != 3 {
+		t.Fatalf("expected 3 neighbors, got %d", len(neighbors))
+	}
+	seen := make(map[int]bool, len(neighbors))
+	for i, nb := range neighbors {
+		if nb.ID < 1 || nb.ID > n {
+			t.Errorf("rank %d: id %d is not in the index", i, nb.ID)
+		}
+		if seen[nb.ID] {
+			t.Errorf("rank %d: id %d returned twice", i, nb.ID)
+		}
+		seen[nb.ID] = true
+		if i > 0 && nb.Distance < neighbors[i-1].Distance {
+			t.Errorf("rank %d: results are not sorted", i)
+		}
+	}
+	if neighbors[0].ID != n {
+		t.Errorf("expected the nearest id %d first, got %v", n, neighbors)
+	}
+}
+
 func TestHNSWIndex_BulkAddValidation(t *testing.T) {
 	index := newTestIndex(t, 4, hnsw.WithM(5), hnsw.WithEf(10))
 	if err := index.Add(1, []float32{1, 2, 3, 4}); err != nil {
