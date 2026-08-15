@@ -54,6 +54,14 @@ sudo apt-get install -y golang-go make gcc ## or clang
 
 - Use the `make lint` command to run the linters.
 
+### Cross-Compiling
+
+Hann uses cgo, so cross-compiling needs a C cross-toolchain. Zig provides one without any system setup:
+
+```shell
+CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux-gnu" go build ./...
+```
+
 #### See Available Commands
 
 - Run `make help` to see all available commands for managing different tasks.

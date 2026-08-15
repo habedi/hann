@@ -130,9 +130,11 @@ func TestPQIVF_ConcurrentUpdateSearch(t *testing.T) {
 		}(i)
 		go func() {
 			defer wg.Done()
-			// The index becomes untrained once an update lands, so an
-			// error is acceptable here. The race detector is the check.
-			_, _ = idx.Search(query, 1)
+			// The index stays trained across updates, so every search
+			// must succeed while the writers run.
+			if _, err := idx.Search(query, 1); err != nil {
+				t.Errorf("Search failed during concurrent updates: %v", err)
+			}
 		}()
 	}
 	wg.Wait()

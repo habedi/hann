@@ -1,16 +1,14 @@
 #include "simd_distance.h"
+#include "simd_isa.h"
 #include <math.h>
 #include <stddef.h>
-#include <stdio.h>
 
-// The AVX variants are compiled with a per-function target attribute instead
-// of a package-wide -mavx flag, so the fallback functions and the dispatch
-// code never contain AVX instructions and stay safe on CPUs without AVX.
-// hann_cpu_init still selects a variant at runtime through function pointers.
-#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
-#include <immintrin.h>
-#define HANN_TARGET_AVX __attribute__((target("avx")))
-#endif
+// The AVX variants are compiled with a per-function target attribute
+// (declared in simd_isa.h) instead of a package-wide -mavx flag, so the
+// fallback functions and the dispatch code never contain AVX instructions
+// and stay safe on CPUs without AVX. hann_cpu_init still selects a variant
+// at runtime through function pointers. The vector bodies live in
+// simd_kernels.inc.h and are instantiated per ISA below.
 
 // Function pointers for distance functions
 float (*simd_euclidean_ptr)(const float*, const float*, size_t);
@@ -18,7 +16,15 @@ float (*simd_squared_euclidean_ptr)(const float*, const float*, size_t);
 float (*simd_manhattan_ptr)(const float*, const float*, size_t);
 float (*simd_cosine_distance_ptr)(const float*, const float*, size_t);
 
-// Fallback implementations
+// Function pointers for the batch variants, which compute the distance from
+// one query to n candidate vectors stored consecutively in a flat buffer.
+void (*simd_euclidean_batch_ptr)(const float*, const float*, size_t, size_t, double*);
+void (*simd_squared_euclidean_batch_ptr)(const float*, const float*, size_t, size_t, double*);
+void (*simd_manhattan_batch_ptr)(const float*, const float*, size_t, size_t, double*);
+void (*simd_cosine_distance_batch_ptr)(const float*, const float*, size_t, size_t, double*);
+
+// Fallback implementations. They stay hand-written scalar C, as the
+// readable reference for the vector kernels.
 float euclidean_fallback(const float* a, const float* b, size_t n) {
     float sum = 0.0f;
     for (size_t i = 0; i < n; i++) {
@@ -65,217 +71,126 @@ float cosine_distance_fallback(const float* a, const float* b, size_t n) {
     return 1.0f - cosine_similarity;
 }
 
+// Batch fallbacks: a scalar loop over the per-pair fallbacks.
+void euclidean_batch_fallback(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (double)euclidean_fallback(q, flat + i * dim, dim);
+    }
+}
+
+void squared_euclidean_batch_fallback(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (double)squared_euclidean_fallback(q, flat + i * dim, dim);
+    }
+}
+
+void manhattan_batch_fallback(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (double)manhattan_fallback(q, flat + i * dim, dim);
+    }
+}
+
+void cosine_distance_batch_fallback(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (double)cosine_distance_fallback(q, flat + i * dim, dim);
+    }
+}
+
+#define HANN_EMIT_DISTANCE 1
+
 #ifdef HANN_TARGET_AVX
-// AVX implementations
-HANN_TARGET_AVX
-static inline float horizontal_sum256(__m256 v) {
-    __m128 vlow = _mm256_castps256_ps128(v);
-    __m128 vhigh = _mm256_extractf128_ps(v, 1);
-    vlow = _mm_add_ps(vlow, vhigh);
-    __m128 shuf = _mm_movehdup_ps(vlow);
-    __m128 sums = _mm_add_ps(vlow, shuf);
-    shuf = _mm_movehl_ps(shuf, sums);
-    sums = _mm_add_ss(sums, shuf);
-    return _mm_cvtss_f32(sums);
-}
-
-HANN_TARGET_AVX
-float euclidean_avx(const float* a, const float* b, size_t n) {
-    __m256 sum_vec = _mm256_setzero_ps();
-    size_t i = 0;
-    size_t limit = n - (n % 8);
-    for (; i < limit; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        __m256 diff = _mm256_sub_ps(va, vb);
-        __m256 sq = _mm256_mul_ps(diff, diff);
-        sum_vec = _mm256_add_ps(sum_vec, sq);
-    }
-    float sum = horizontal_sum256(sum_vec);
-    for (; i < n; i++) {
-        float diff = a[i] - b[i];
-        sum += diff * diff;
-    }
-    return sqrtf(sum);
-}
-
-HANN_TARGET_AVX
-float squared_euclidean_avx(const float* a, const float* b, size_t n) {
-    __m256 sum_vec = _mm256_setzero_ps();
-    size_t i = 0;
-    size_t limit = n - (n % 8);
-    for (; i < limit; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        __m256 diff = _mm256_sub_ps(va, vb);
-        __m256 sq = _mm256_mul_ps(diff, diff);
-        sum_vec = _mm256_add_ps(sum_vec, sq);
-    }
-    float sum = horizontal_sum256(sum_vec);
-    for (; i < n; i++) {
-        float diff = a[i] - b[i];
-        sum += diff * diff;
-    }
-    return sum;
-}
-
-HANN_TARGET_AVX
-float manhattan_avx(const float* a, const float* b, size_t n) {
-    __m256 sum_vec = _mm256_setzero_ps();
-    __m256 sign_mask = _mm256_set1_ps(-0.0f);
-    size_t i = 0;
-    size_t limit = n - (n % 8);
-    for (; i < limit; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        __m256 diff = _mm256_sub_ps(va, vb);
-        __m256 abs_diff = _mm256_andnot_ps(sign_mask, diff);
-        sum_vec = _mm256_add_ps(sum_vec, abs_diff);
-    }
-    float sum = horizontal_sum256(sum_vec);
-    for (; i < n; i++) {
-        sum += fabsf(a[i] - b[i]);
-    }
-    return sum;
-}
-
-HANN_TARGET_AVX
-float cosine_distance_avx(const float* a, const float* b, size_t n) {
-    __m256 dot_vec = _mm256_setzero_ps();
-    __m256 norm_a_vec = _mm256_setzero_ps();
-    __m256 norm_b_vec = _mm256_setzero_ps();
-    size_t i = 0;
-    size_t limit = n - (n % 8);
-    for (; i < limit; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        dot_vec = _mm256_add_ps(dot_vec, _mm256_mul_ps(va, vb));
-        norm_a_vec = _mm256_add_ps(norm_a_vec, _mm256_mul_ps(va, va));
-        norm_b_vec = _mm256_add_ps(norm_b_vec, _mm256_mul_ps(vb, vb));
-    }
-    float dot = horizontal_sum256(dot_vec);
-    float norm_a = horizontal_sum256(norm_a_vec);
-    float norm_b = horizontal_sum256(norm_b_vec);
-    for (; i < n; i++) {
-        dot += a[i] * b[i];
-        norm_a += a[i] * a[i];
-        norm_b += b[i] * b[i];
-    }
-    float normA = sqrtf(norm_a);
-    float normB = sqrtf(norm_b);
-    if (normA == 0.0f || normB == 0.0f) {
-        return 1.0f;
-    }
-    float cosine_similarity = dot / (normA * normB);
-    if (cosine_similarity > 1.0f) cosine_similarity = 1.0f;
-    if (cosine_similarity < -1.0f) cosine_similarity = -1.0f;
-    return 1.0f - cosine_similarity;
-}
+// AVX instantiations
+#define HANN_EMIT_MANHATTAN 1
+#include "simd_kernels_avx.inc.h"
+#undef HANN_EMIT_MANHATTAN
 #else
 float euclidean_avx(const float* a, const float* b, size_t n) { return euclidean_fallback(a, b, n); }
 float squared_euclidean_avx(const float* a, const float* b, size_t n) { return squared_euclidean_fallback(a, b, n); }
 float manhattan_avx(const float* a, const float* b, size_t n) { return manhattan_fallback(a, b, n); }
 float cosine_distance_avx(const float* a, const float* b, size_t n) { return cosine_distance_fallback(a, b, n); }
+void euclidean_batch_avx(const float* q, const float* flat, size_t dim, size_t n, double* out) { euclidean_batch_fallback(q, flat, dim, n, out); }
+void squared_euclidean_batch_avx(const float* q, const float* flat, size_t dim, size_t n, double* out) { squared_euclidean_batch_fallback(q, flat, dim, n, out); }
+void manhattan_batch_avx(const float* q, const float* flat, size_t dim, size_t n, double* out) { manhattan_batch_fallback(q, flat, dim, n, out); }
+void cosine_distance_batch_avx(const float* q, const float* flat, size_t dim, size_t n, double* out) { cosine_distance_batch_fallback(q, flat, dim, n, out); }
 #endif
 
-#if defined(__AVX2__) && defined(__FMA__)
-float euclidean_avx2(const float* a, const float* b, size_t n) {
-    __m256 sum_vec = _mm256_setzero_ps();
-    size_t i = 0;
-    size_t limit = n - (n % 8);
-    for (; i < limit; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        __m256 diff = _mm256_sub_ps(va, vb);
-        sum_vec = _mm256_fmadd_ps(diff, diff, sum_vec);
-    }
-    float sum = horizontal_sum256(sum_vec);
-    for (; i < n; i++) {
-        float diff = a[i] - b[i];
-        sum += diff * diff;
-    }
-    return sqrtf(sum);
-}
+#ifdef HANN_TARGET_AVX2
+// AVX2 instantiations
+#include "simd_kernels_avx2.inc.h"
+#else
+float euclidean_avx2(const float* a, const float* b, size_t n) { return euclidean_avx(a, b, n); }
+float squared_euclidean_avx2(const float* a, const float* b, size_t n) { return squared_euclidean_avx(a, b, n); }
+float cosine_distance_avx2(const float* a, const float* b, size_t n) { return cosine_distance_avx(a, b, n); }
+void euclidean_batch_avx2(const float* q, const float* flat, size_t dim, size_t n, double* out) { euclidean_batch_avx(q, flat, dim, n, out); }
+void squared_euclidean_batch_avx2(const float* q, const float* flat, size_t dim, size_t n, double* out) { squared_euclidean_batch_avx(q, flat, dim, n, out); }
+void cosine_distance_batch_avx2(const float* q, const float* flat, size_t dim, size_t n, double* out) { cosine_distance_batch_avx(q, flat, dim, n, out); }
+#endif
 
-float squared_euclidean_avx2(const float* a, const float* b, size_t n) {
-    __m256 sum_vec = _mm256_setzero_ps();
-    size_t i = 0;
-    size_t limit = n - (n % 8);
-    for (; i < limit; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        __m256 diff = _mm256_sub_ps(va, vb);
-        sum_vec = _mm256_fmadd_ps(diff, diff, sum_vec);
-    }
-    float sum = horizontal_sum256(sum_vec);
-    for (; i < n; i++) {
-        float diff = a[i] - b[i];
-        sum += diff * diff;
-    }
-    return sum;
-}
+#ifdef HANN_HAVE_NEON
+// NEON instantiations. NEON is a baseline feature of aarch64, so they compile
+// whenever the target is arm64, and hann_cpu_init installs them there.
+#define HANN_EMIT_MANHATTAN 1
+#include "simd_kernels_neon.inc.h"
+#undef HANN_EMIT_MANHATTAN
+#endif
 
+#undef HANN_EMIT_DISTANCE
+
+// The Manhattan kernel accumulates absolute differences, which has no
+// multiply-add shape for FMA to improve, so the AVX2 tier reuses the AVX
+// variant. Aliasing is a dispatch decision, so it lives here rather than in
+// the kernel bodies.
 float manhattan_avx2(const float* a, const float* b, size_t n) {
     return manhattan_avx(a, b, n);
 }
 
-float cosine_distance_avx2(const float* a, const float* b, size_t n) {
-    __m256 dot_vec = _mm256_setzero_ps();
-    __m256 norm_a_vec = _mm256_setzero_ps();
-    __m256 norm_b_vec = _mm256_setzero_ps();
-    size_t i = 0;
-    size_t limit = n - (n % 8);
-    for (; i < limit; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        dot_vec = _mm256_fmadd_ps(va, vb, dot_vec);
-        norm_a_vec = _mm256_fmadd_ps(va, va, norm_a_vec);
-        norm_b_vec = _mm256_fmadd_ps(vb, vb, norm_b_vec);
-    }
-    float dot = horizontal_sum256(dot_vec);
-    float norm_a = horizontal_sum256(norm_a_vec);
-    float norm_b = horizontal_sum256(norm_b_vec);
-    for (; i < n; i++) {
-        dot += a[i] * b[i];
-        norm_a += a[i] * a[i];
-        norm_b += b[i] * b[i];
-    }
-    float normA = sqrtf(norm_a);
-    float normB = sqrtf(norm_b);
-    if (normA == 0.0f || normB == 0.0f) {
-        return 1.0f;
-    }
-    float cosine_similarity = dot / (normA * normB);
-    if (cosine_similarity > 1.0f) cosine_similarity = 1.0f;
-    if (cosine_similarity < -1.0f) cosine_similarity = -1.0f;
-    return 1.0f - cosine_similarity;
+void manhattan_batch_avx2(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    manhattan_batch_avx(q, flat, dim, n, out);
 }
-#else
-float euclidean_avx2(const float* a, const float* b, size_t n) { return euclidean_avx(a, b, n); }
-float squared_euclidean_avx2(const float* a, const float* b, size_t n) { return squared_euclidean_avx(a, b, n); }
-float manhattan_avx2(const float* a, const float* b, size_t n) { return manhattan_avx(a, b, n); }
-float cosine_distance_avx2(const float* a, const float* b, size_t n) { return cosine_distance_avx(a, b, n); }
-#endif
 
 void init_distance_functions(int support_level) {
     switch (support_level) {
+#ifdef HANN_HAVE_NEON
+        case 3: // NEON
+            simd_euclidean_ptr = euclidean_neon;
+            simd_squared_euclidean_ptr = squared_euclidean_neon;
+            simd_manhattan_ptr = manhattan_neon;
+            simd_cosine_distance_ptr = cosine_distance_neon;
+            simd_euclidean_batch_ptr = euclidean_batch_neon;
+            simd_squared_euclidean_batch_ptr = squared_euclidean_batch_neon;
+            simd_manhattan_batch_ptr = manhattan_batch_neon;
+            simd_cosine_distance_batch_ptr = cosine_distance_batch_neon;
+            break;
+#endif
         case 2: // AVX2
             simd_euclidean_ptr = euclidean_avx2;
             simd_squared_euclidean_ptr = squared_euclidean_avx2;
             simd_manhattan_ptr = manhattan_avx2;
             simd_cosine_distance_ptr = cosine_distance_avx2;
+            simd_euclidean_batch_ptr = euclidean_batch_avx2;
+            simd_squared_euclidean_batch_ptr = squared_euclidean_batch_avx2;
+            simd_manhattan_batch_ptr = manhattan_batch_avx2;
+            simd_cosine_distance_batch_ptr = cosine_distance_batch_avx2;
             break;
         case 1: // AVX
             simd_euclidean_ptr = euclidean_avx;
             simd_squared_euclidean_ptr = squared_euclidean_avx;
             simd_manhattan_ptr = manhattan_avx;
             simd_cosine_distance_ptr = cosine_distance_avx;
+            simd_euclidean_batch_ptr = euclidean_batch_avx;
+            simd_squared_euclidean_batch_ptr = squared_euclidean_batch_avx;
+            simd_manhattan_batch_ptr = manhattan_batch_avx;
+            simd_cosine_distance_batch_ptr = cosine_distance_batch_avx;
             break;
         default: // Fallback
             simd_euclidean_ptr = euclidean_fallback;
             simd_squared_euclidean_ptr = squared_euclidean_fallback;
             simd_manhattan_ptr = manhattan_fallback;
             simd_cosine_distance_ptr = cosine_distance_fallback;
+            simd_euclidean_batch_ptr = euclidean_batch_fallback;
+            simd_squared_euclidean_batch_ptr = squared_euclidean_batch_fallback;
+            simd_manhattan_batch_ptr = manhattan_batch_fallback;
+            simd_cosine_distance_batch_ptr = cosine_distance_batch_fallback;
             break;
     }
 }
@@ -295,4 +210,20 @@ float simd_manhattan(const float* a, const float* b, size_t n) {
 
 float simd_cosine_distance(const float* a, const float* b, size_t n) {
     return simd_cosine_distance_ptr(a, b, n);
+}
+
+void simd_euclidean_batch(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    simd_euclidean_batch_ptr(q, flat, dim, n, out);
+}
+
+void simd_squared_euclidean_batch(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    simd_squared_euclidean_batch_ptr(q, flat, dim, n, out);
+}
+
+void simd_manhattan_batch(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    simd_manhattan_batch_ptr(q, flat, dim, n, out);
+}
+
+void simd_cosine_distance_batch(const float* q, const float* flat, size_t dim, size_t n, double* out) {
+    simd_cosine_distance_batch_ptr(q, flat, dim, n, out);
 }

@@ -68,6 +68,59 @@ func manhattan(a, b []float32) (float64, error) {
 	return dist, nil
 }
 
+// The batch wrappers pass one query and a flat buffer of candidate vectors
+// to the C batch kernels. The Metric batch methods validate the lengths
+// before calling them, so every slice is non-empty here and the C side never
+// reads past the counts it is given.
+
+// euclideanBatch computes the Euclidean distance from the query to each row
+// of the flat buffer.
+func euclideanBatch(query, flat []float32, out []float64) {
+	C.simd_euclidean_batch(
+		(*C.float)(unsafe.Pointer(&query[0])),
+		(*C.float)(unsafe.Pointer(&flat[0])),
+		C.size_t(len(query)),
+		C.size_t(len(out)),
+		(*C.double)(unsafe.Pointer(&out[0])),
+	)
+}
+
+// squaredEuclideanBatch computes the squared Euclidean distance from the
+// query to each row of the flat buffer.
+func squaredEuclideanBatch(query, flat []float32, out []float64) {
+	C.simd_squared_euclidean_batch(
+		(*C.float)(unsafe.Pointer(&query[0])),
+		(*C.float)(unsafe.Pointer(&flat[0])),
+		C.size_t(len(query)),
+		C.size_t(len(out)),
+		(*C.double)(unsafe.Pointer(&out[0])),
+	)
+}
+
+// manhattanBatch computes the Manhattan distance from the query to each row
+// of the flat buffer.
+func manhattanBatch(query, flat []float32, out []float64) {
+	C.simd_manhattan_batch(
+		(*C.float)(unsafe.Pointer(&query[0])),
+		(*C.float)(unsafe.Pointer(&flat[0])),
+		C.size_t(len(query)),
+		C.size_t(len(out)),
+		(*C.double)(unsafe.Pointer(&out[0])),
+	)
+}
+
+// cosineDistanceBatch computes the cosine distance from the query to each
+// row of the flat buffer.
+func cosineDistanceBatch(query, flat []float32, out []float64) {
+	C.simd_cosine_distance_batch(
+		(*C.float)(unsafe.Pointer(&query[0])),
+		(*C.float)(unsafe.Pointer(&flat[0])),
+		C.size_t(len(query)),
+		C.size_t(len(out)),
+		(*C.double)(unsafe.Pointer(&out[0])),
+	)
+}
+
 // cosineDistance computes the cosine distance between two vectors.
 func cosineDistance(a, b []float32) (float64, error) {
 	if len(a) != len(b) {

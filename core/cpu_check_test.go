@@ -1,6 +1,7 @@
 package core
 
 import (
+	"runtime"
 	"testing"
 
 	"golang.org/x/sys/cpu"
@@ -10,7 +11,11 @@ func TestSupportedCPUFeature(t *testing.T) {
 	// This test checks if the supportedCPUFeature variable is set correctly
 	// based on the CPU capabilities of the machine running the test.
 
-	if cpu.X86.HasAVX2 {
+	if runtime.GOARCH == "arm64" {
+		if supportedCPUFeature != NEON {
+			t.Errorf("CPU is arm64, but supported feature is %v", supportedCPUFeature)
+		}
+	} else if cpu.X86.HasAVX2 {
 		if supportedCPUFeature != AVX2 {
 			t.Errorf("CPU has AVX2, but supported feature is %v", supportedCPUFeature)
 		}

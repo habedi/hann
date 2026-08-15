@@ -7,8 +7,9 @@
 
   outputs = { self, nixpkgs }:
     let
-      # The vectorized distance functions target AVX, and x86_64 is the only
-      # architecture the library is tested on.
+      # The dev shell is defined for the x86_64 systems used for local
+      # development. The library itself also builds and runs on arm64 through
+      # the NEON kernel variants, and an arm64 CI cell tests it there.
       supportedSystems = [ "x86_64-linux" "x86_64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
     in
@@ -36,6 +37,9 @@
               # Profiling the examples and the benchmarks
               pprof
               graphviz
+
+              # Cross-compiling the cgo code (zig cc is a hermetic C cross-toolchain)
+              zig
 
               # Git hooks, and the dataset download script
               pre-commit

@@ -139,9 +139,9 @@ This allows fast approximate nearest neighbor searches by limiting queries to re
 efficiently comparing compressed vectors, which reduces search time and storage requirements.
 
 > [!NOTE]
-> Before searching, the index must be trained using the `Train()` method.
-> This method should be called after adding data to the index.
-> Any operation that invalidates the trained state of the index (like `BulkDelete`) will need the index to be retrained.
+> Before searching, the index must be trained once using the `Train()` method, after the initial data has been added.
+> Mutations after training (adds, deletes, and updates) keep the index searchable without retraining.
+> `Train()` can be re-run to refresh the clustering quality after many mutations.
 
 The index has the following configurable parameters:
 

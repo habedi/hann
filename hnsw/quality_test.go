@@ -57,24 +57,67 @@ func measureMeanRecall(t *testing.T, metric core.Metric) float64 {
 func TestHNSWIndex_RecallEuclidean(t *testing.T) {
 	recall := measureMeanRecall(t, core.Euclidean)
 	t.Logf("euclidean mean recall at k=10: %.4f", recall)
-	// Observed range over 40 runs: 0.64 to 0.93. The spread comes from the
-	// level generator: the level 0 graph splits into per-cluster components,
-	// so recall depends on how well the upper levels route between clusters.
-	// The threshold is a regression tripwire, not a quality goal.
-	if recall < 0.50 {
-		t.Errorf("euclidean mean recall %.4f is below the regression threshold 0.50", recall)
+	// Observed value over 12 runs: 1.00 on every run. The neighbor selection
+	// heuristic raised the range from the 0.64 to 0.93 seen with closest-M
+	// selection, because it keeps the level 0 graph connected across
+	// clusters. The threshold is a regression tripwire, not a quality goal.
+	if recall < 0.90 {
+		t.Errorf("euclidean mean recall %.4f is below the regression threshold 0.90", recall)
 	}
 }
 
 func TestHNSWIndex_RecallCosine(t *testing.T) {
 	recall := measureMeanRecall(t, core.Cosine)
 	t.Logf("cosine mean recall at k=10: %.4f", recall)
-	// Observed range over 40 runs: 0.55 to 0.92, with more spread than the
-	// euclidean variant. The threshold is a regression tripwire, not a
-	// quality goal.
-	if recall < 0.40 {
-		t.Errorf("cosine mean recall %.4f is below the regression threshold 0.40", recall)
+	// Observed value over 12 runs: 1.00 on every run. The neighbor selection
+	// heuristic raised the range from the 0.55 to 0.92 seen with closest-M
+	// selection. The threshold is a regression tripwire, not a quality goal.
+	if recall < 0.90 {
+		t.Errorf("cosine mean recall %.4f is below the regression threshold 0.90", recall)
 	}
+}
+
+// TestHNSWIndex_Level0Connectivity checks that the level 0 graph stays
+// connected on clustered data. A search whose depth covers the whole index
+// must reach every node through the graph alone, so the brute-force fallback
+// counter has to stay at zero. Closest-M neighbor selection used to split the
+// graph into per-cluster components, which this test would catch. Graph
+// construction is unseeded and HNSW connectivity is probabilistic, so a rare
+// build can strand a node; the test therefore builds up to three independent
+// indexes and requires at least one fully connected graph, which the
+// fragmentation regression can never produce.
+func TestHNSWIndex_Level0Connectivity(t *testing.T) {
+	const (
+		dim      = 16
+		n        = 2000
+		clusters = 16
+		attempts = 3
+	)
+	data := testutil.ClusteredData(42, n, dim, clusters)
+	query := testutil.Queries(43, data, 1)[0]
+	for attempt := 1; attempt <= attempts; attempt++ {
+		index := newTestIndex(t, dim, hnsw.WithM(16), hnsw.WithEf(n))
+		vectors := make(map[int][]float32, len(data))
+		for id, vec := range data {
+			vectors[id] = testutil.CopyVector(vec)
+		}
+		if err := index.BulkAdd(vectors); err != nil {
+			t.Fatalf("attempt %d: BulkAdd failed: %v", attempt, err)
+		}
+		results, err := index.Search(testutil.CopyVector(query), n)
+		if err != nil {
+			t.Fatalf("attempt %d: Search failed: %v", attempt, err)
+		}
+		if len(results) != n {
+			t.Fatalf("attempt %d: search with k=%d returned %d results", attempt, n, len(results))
+		}
+		fb := index.Stats().FallbackSearches
+		if fb == 0 {
+			return
+		}
+		t.Logf("attempt %d: graph search reached only part of the index (%d fallback searches)", attempt, fb)
+	}
+	t.Errorf("no fully connected graph in %d builds; the level 0 graph is fragmenting", attempts)
 }
 
 // TestHNSWIndex_DifferentialExact compares complete searches against brute

@@ -89,24 +89,6 @@ func WithBruteForceFallback(allow bool) Option {
 	return func(pq *Index) { pq.allowBruteForceFallback = allow }
 }
 
-// recalcCentroid recalculates the centroid for a given cluster based on its current entries.
-func (pq *Index) recalcCentroid(cluster int) {
-	entries := pq.invertedLists[cluster]
-	if len(entries) == 0 {
-		return
-	}
-	newCentroid := make([]float32, pq.dimension)
-	for _, entry := range entries {
-		for i, v := range entry.Vector {
-			newCentroid[i] += v
-		}
-	}
-	for i := range newCentroid {
-		newCentroid[i] /= float32(len(entries))
-	}
-	pq.coarseCentroids[cluster] = newCentroid
-}
-
 // New creates a new PQIVF index for vectors of the given dimension. The
 // index always uses the Euclidean metric, because k-means centroid averaging
 // assumes it. Defaults: 16 coarse clusters, a PQ codebook size of 16, 10
@@ -218,15 +200,19 @@ func (pq *Index) nearestCentroids(vector []float32) ([]struct {
 	return res, nil
 }
 
-// Add inserts a new vector with an id into the temporary holding area.
+// Add inserts a new vector with an id. On a trained index the vector is
+// assigned to its nearest coarse cluster immediately and the index stays
+// searchable; on an untrained index the vector goes into the temporary
+// holding area until Train is called.
 func (pq *Index) Add(id int, vector []float32) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 	return pq.addLocked(id, vector)
 }
 
-// addLocked inserts a new vector with an id into the temporary holding
-// area. The caller must hold the mutex.
+// addLocked inserts a new vector with an id, assigning it to a cluster when
+// the index is trained and pending it otherwise. The caller must hold the
+// mutex.
 func (pq *Index) addLocked(id int, vector []float32) error {
 	if err := pq.validateVector(vector); err != nil {
 		return err
@@ -238,12 +224,40 @@ func (pq *Index) addLocked(id int, vector []float32) error {
 		return fmt.Errorf("id %d already exists in pending vectors", id)
 	}
 
+	if pq.trained {
+		return pq.assignLocked(id, vector)
+	}
 	pq.pendingVectors[id] = vector
-	pq.trained = false
 	return nil
 }
 
-// BulkAdd inserts multiple vectors into the temporary holding area.
+// assignLocked places a vector into the trained index structure: the nearest
+// coarse cluster, PQ codes when the codebooks allow encoding, and the id and
+// count bookkeeping. Search tolerates entries without codes by ranking them
+// with the exact vector, so a failed encoding stores the entry without codes
+// rather than failing the insert. The caller must hold the mutex, and the
+// index must be trained.
+func (pq *Index) assignLocked(id int, vector []float32) error {
+	cluster, _, err := pq.nearestCentroid(vector)
+	if err != nil {
+		return err
+	}
+	entry := pqEntry{ID: id, Vector: vector, Cluster: cluster}
+	if pq.codebooks != nil {
+		if codes, err := pq.encodeVector(vector, cluster); err == nil {
+			entry.Codes = codes
+		}
+	}
+	pq.invertedLists[cluster] = append(pq.invertedLists[cluster], entry)
+	pq.idToCluster[id] = cluster
+	pq.clusterCounts[cluster]++
+	return nil
+}
+
+// BulkAdd inserts multiple vectors, following the same rule as Add: on a
+// trained index each vector is assigned to its nearest coarse cluster
+// immediately, and on an untrained index the vectors go into the temporary
+// holding area until Train is called.
 func (pq *Index) BulkAdd(vectors map[int][]float32) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
@@ -266,9 +280,14 @@ func (pq *Index) BulkAdd(vectors map[int][]float32) error {
 			return fmt.Errorf("id %d already exists in pending vectors", id)
 		}
 
-		pq.pendingVectors[id] = vector
+		if pq.trained {
+			if err := pq.assignLocked(id, vector); err != nil {
+				return err
+			}
+		} else {
+			pq.pendingVectors[id] = vector
+		}
 	}
-	pq.trained = false
 	return nil
 }
 
@@ -280,12 +299,16 @@ func (pq *Index) Delete(id int) error {
 }
 
 // deleteLocked removes an entry by its id, from either pending vectors or
-// clustered data. The caller must hold the mutex.
+// clustered data. A delete does not untrain the index and does not move the
+// coarse centroids: the stored PQ codes are residuals against the centroid
+// they were encoded with, so recomputing a centroid from the surviving
+// entries would silently degrade every code in the cluster. The centroids
+// stay fixed between Train calls, and Train is the refresh. The caller must
+// hold the mutex.
 func (pq *Index) deleteLocked(id int) error {
 	// If the vector is in the pending list, remove it from there.
 	if _, exists := pq.pendingVectors[id]; exists {
 		delete(pq.pendingVectors, id)
-		pq.trained = false
 		return nil
 	}
 
@@ -313,20 +336,17 @@ func (pq *Index) deleteLocked(id int) error {
 	}
 	pq.invertedLists[cluster] = newEntries
 	delete(pq.idToCluster, id)
-	if len(newEntries) > 0 {
-		pq.recalcCentroid(cluster)
-	}
-	pq.trained = false
 	return nil
 }
 
-// BulkDelete removes multiple entries from the index.
+// BulkDelete removes multiple entries from the index. Like Delete, it keeps
+// the index trained and leaves the coarse centroids fixed; see deleteLocked
+// for the reasoning.
 func (pq *Index) BulkDelete(ids []int) error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
 	sort.Ints(ids)
-	updatedClusters := make(map[int]bool)
 	for _, id := range ids {
 		// If in pending, just delete.
 		if _, exists := pq.pendingVectors[id]; exists {
@@ -352,14 +372,7 @@ func (pq *Index) BulkDelete(ids []int) error {
 		}
 		pq.invertedLists[cluster] = newEntries
 		delete(pq.idToCluster, id)
-		if len(newEntries) > 0 {
-			updatedClusters[cluster] = true
-		}
 	}
-	for cluster := range updatedClusters {
-		pq.recalcCentroid(cluster)
-	}
-	pq.trained = false
 	return nil
 }
 
@@ -423,7 +436,11 @@ func (pq *Index) BulkUpdate(updates map[int][]float32) error {
 	return nil
 }
 
-// Train builds the index structure, including coarse centroids and PQ codebooks.
+// Train builds the index structure, including coarse centroids and PQ
+// codebooks. It is both the initial training step and an optional refresh:
+// it re-clusters every vector, clustered and pending, so it can be re-run
+// to restore clustering quality after many mutations. Once an index has
+// been trained, later adds, deletes, and updates keep it searchable.
 func (pq *Index) Train() error {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
@@ -748,7 +765,8 @@ func (pq *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 				}
 			}
 		} else {
-			// Path for entries without PQ codes or when index is not fully trained
+			// Path for entries without PQ codes, such as an entry added
+			// after training whose encoding failed.
 			d, distErr = pq.metric.Rank(query, entry.Vector)
 		}
 
