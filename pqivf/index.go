@@ -764,7 +764,7 @@ func (pq *Index) Search(query []float32, k int) ([]core.Neighbor, error) {
 					// Fallback to exact distance if vector addition fails
 					d, distErr = pq.metric.Rank(query, entry.Vector)
 				} else {
-					// Main path: use approximate distance
+					// The main path uses the approximate distance.
 					d, distErr = pq.metric.Rank(query, approxVec)
 				}
 			}

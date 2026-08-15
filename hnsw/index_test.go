@@ -88,7 +88,7 @@ func TestHNSWIndex_Delete(t *testing.T) {
 	dim := 6
 	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
-	// Arrange: add two vectors.
+	// Add two vectors.
 	if err := index.Add(1, []float32{1, 2, 3, 4, 5, 6}); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
@@ -96,12 +96,12 @@ func TestHNSWIndex_Delete(t *testing.T) {
 		t.Fatalf("Add failed: %v", err)
 	}
 
-	// Act: delete id 1.
+	// Delete id 1.
 	if err := index.Delete(1); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	// Assert: stats count should be 1.
+	// The count must now be 1.
 	stats := index.Stats()
 	if stats.Count != 1 {
 		t.Errorf("expected count 1 after Delete, got %d", stats.Count)
@@ -117,17 +117,17 @@ func TestHNSWIndex_Update(t *testing.T) {
 	dim := 6
 	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
-	// Arrange: add a vector.
+	// Add a vector.
 	if err := index.Add(1, []float32{1, 2, 3, 4, 5, 6}); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 
-	// Act: update with new vector.
+	// Update it with a new vector.
 	if err := index.Update(1, []float32{6, 6, 6, 6, 6, 6}); err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	// Assert: search with updated vector.
+	// Search with the updated vector.
 	query := []float32{6, 6, 6, 6, 6, 6}
 	neighbors, err := index.Search(query, 1)
 	if err != nil {
@@ -154,7 +154,7 @@ func TestHNSWIndex_BulkAdd(t *testing.T) {
 	dim := 6
 	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
-	// Arrange: Create a set of 5 vectors.
+	// Create a set of 5 vectors.
 	vectors := map[int][]float32{
 		1: {1, 2, 3, 4, 5, 6},
 		2: {6, 5, 4, 3, 2, 1},
@@ -163,12 +163,12 @@ func TestHNSWIndex_BulkAdd(t *testing.T) {
 		5: {3, 3, 3, 3, 3, 3},
 	}
 
-	// Act: Bulk add the vectors.
+	// Bulk add the vectors.
 	if err := index.BulkAdd(vectors); err != nil {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	// Assert: Check the index count.
+	// Check the index count.
 	stats := index.Stats()
 	if stats.Count != len(vectors) {
 		t.Errorf("expected count %d after BulkAdd, got %d", len(vectors), stats.Count)
@@ -179,7 +179,7 @@ func TestHNSWIndex_BulkDelete(t *testing.T) {
 	dim := 6
 	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
-	// Arrange: Bulk add a set of vectors.
+	// Bulk add a set of vectors.
 	vectors := map[int][]float32{
 		1: {1, 2, 3, 4, 5, 6},
 		2: {6, 5, 4, 3, 2, 1},
@@ -191,13 +191,13 @@ func TestHNSWIndex_BulkDelete(t *testing.T) {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	// Act: Bulk delete some ids.
+	// Bulk delete some ids.
 	deleteIDs := []int{2, 4}
 	if err := index.BulkDelete(deleteIDs); err != nil {
 		t.Fatalf("BulkDelete failed: %v", err)
 	}
 
-	// Assert: Verify the count and ensure the deleted ids are gone.
+	// Verify the count and ensure the deleted ids are gone.
 	stats := index.Stats()
 	expectedCount := len(vectors) - len(deleteIDs)
 	if stats.Count != expectedCount {
@@ -221,7 +221,7 @@ func TestHNSWIndex_BulkUpdate(t *testing.T) {
 	dim := 6
 	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
-	// Arrange: Bulk add a set of vectors.
+	// Bulk add a set of vectors.
 	vectors := map[int][]float32{
 		1: {1, 2, 3, 4, 5, 6},
 		2: {6, 5, 4, 3, 2, 1},
@@ -231,7 +231,7 @@ func TestHNSWIndex_BulkUpdate(t *testing.T) {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	// Act: Bulk update vectors for some ids.
+	// Bulk update vectors for some ids.
 	updates := map[int][]float32{
 		1: {6, 6, 6, 6, 6, 6},
 		3: {2, 2, 2, 2, 2, 2},
@@ -240,7 +240,7 @@ func TestHNSWIndex_BulkUpdate(t *testing.T) {
 		t.Fatalf("BulkUpdate failed: %v", err)
 	}
 
-	// Assert: For example, search with a query similar to the updated vector of id 1.
+	// Search with a query similar to the updated vector of id 1.
 	query := []float32{6, 6, 6, 6, 6, 6}
 	neighbors, err := index.Search(query, 1)
 	if err != nil {
@@ -255,7 +255,7 @@ func TestHNSWIndex_SaveLoad(t *testing.T) {
 	dim := 6
 	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 
-	// Arrange: add some vectors.
+	// Add some vectors.
 	vectors := map[int][]float32{
 		1: {1, 2, 3, 4, 5, 6},
 		2: {6, 5, 4, 3, 2, 1},
@@ -290,7 +290,7 @@ func TestHNSWIndex_SaveLoad(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	// Assert: check that stats match.
+	// Check that the stats match.
 	stats := newIndex.Stats()
 	if stats.Count != len(vectors) {
 		t.Errorf("expected count %d after Load, got %d", len(vectors), stats.Count)

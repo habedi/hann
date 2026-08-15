@@ -132,7 +132,7 @@ func TestRPTIndex_BulkOperations(t *testing.T) {
 		t.Errorf("expected count %d after BulkAdd, got %d", len(vectors), stats.Count)
 	}
 
-	// BulkUpdate: update vectors 2 and 3.
+	// Update vectors 2 and 3 through BulkUpdate.
 	updates := map[int][]float32{
 		2: {1, 1, 1, 1, 1, 1},
 		3: {4, 4, 4, 4, 4, 4},
@@ -158,7 +158,7 @@ func TestRPTIndex_BulkOperations(t *testing.T) {
 		t.Errorf("expected neighbor id 2 after BulkUpdate, but it was not found")
 	}
 
-	// BulkDelete: remove vectors 1 and 4.
+	// Remove vectors 1 and 4 through BulkDelete.
 	if err := idx.BulkDelete([]int{1, 4}); err != nil {
 		t.Fatalf("BulkDelete failed: %v", err)
 	}

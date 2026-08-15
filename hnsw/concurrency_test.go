@@ -15,7 +15,7 @@ func TestHNSWIndex_ConcurrentBulkOperations(t *testing.T) {
 	index := newTestIndex(t, dim, hnsw.WithM(5), hnsw.WithEf(10))
 	numVectors := 1000
 
-	// Arrange: prepare a map of vectors.
+	// Prepare a map of vectors.
 	vectors := make(map[int][]float32, numVectors)
 	for i := 0; i < numVectors; i++ {
 		vectors[i] = []float32{
@@ -28,12 +28,12 @@ func TestHNSWIndex_ConcurrentBulkOperations(t *testing.T) {
 		}
 	}
 
-	// Act: perform BulkAdd.
+	// Perform the BulkAdd.
 	if err := index.BulkAdd(vectors); err != nil {
 		t.Fatalf("BulkAdd failed: %v", err)
 	}
 
-	// Prepare updates: update half the vectors.
+	// Update half of the vectors.
 	updates := make(map[int][]float32)
 	for i := 0; i < numVectors; i += 2 {
 		updates[i] = []float32{
@@ -46,7 +46,7 @@ func TestHNSWIndex_ConcurrentBulkOperations(t *testing.T) {
 		}
 	}
 
-	// Prepare deletions: delete one-quarter of the vectors.
+	// Delete one-quarter of the vectors.
 	var deleteIDs []int
 	for i := 0; i < numVectors; i += 4 {
 		deleteIDs = append(deleteIDs, i)
@@ -68,7 +68,7 @@ func TestHNSWIndex_ConcurrentBulkOperations(t *testing.T) {
 	}()
 	wg.Wait()
 
-	// Assert: final count.
+	// Check the final count.
 	expected := numVectors - len(deleteIDs)
 	stats := index.Stats()
 	if stats.Count != expected {

@@ -249,8 +249,8 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 				rightIDs = append(rightIDs, p.id)
 			}
 		}
-		// Fallback: the jitter pushed the threshold outside the range of
-		// the projection values, so one side is empty. Split at the median
+		// The jitter can push the threshold outside the range of the
+		// projection values and leave one side empty. Split at the median
 		// value instead. The threshold stored in the node then still sends
 		// a query to the child that holds its neighbors.
 		if len(leftIDs) == 0 || len(rightIDs) == 0 {
@@ -264,9 +264,10 @@ func buildTreeRecursive(ids []int, points map[int][]float32, dimension int,
 				}
 			}
 		}
-		// Last resort: every projection value is equal, so no threshold on
-		// this projection separates the points. Split evenly by position.
-		// Routing is arbitrary among points with identical projections.
+		// When every projection value is equal, no threshold on this
+		// projection separates the points. As a last resort, split evenly
+		// by position. Routing is arbitrary among points with identical
+		// projections.
 		if len(leftIDs) == 0 || len(rightIDs) == 0 {
 			mid = len(ids) / 2
 			leftIDs = make([]int, mid)

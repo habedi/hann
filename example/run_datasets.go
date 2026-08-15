@@ -105,7 +105,7 @@ func RunDataset(factory IndexFactory, dataset, root string, k, numQueries, maxRe
 	tasks := make(chan int, numQueries)
 	var wg sync.WaitGroup
 
-	// Worker function: processes queries from the task channel.
+	// The worker processes queries from the task channel.
 	worker := func() {
 		defer wg.Done()
 		for idx := range tasks {
