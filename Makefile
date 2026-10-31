@@ -81,7 +81,7 @@ else
 	sudo snap install go --classic
 	sudo snap install golangci-lint --classic
 endif
-	sudo apt-get install -y python3-poetry
+	sudo apt-get install -y python3-uv
 	$(GO) install github.com/google/pprof@latest
 	$(GO) mod download
 
