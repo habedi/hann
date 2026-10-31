@@ -24,4 +24,4 @@ huggingface-cli download habedi/nearest-neighbors-datasets-large --repo-type dat
 The command must be run inside this directory (`example/data`).
 
 For convenience, you can use the [`pyproject.toml`](../../pyproject.toml) file to set up a Python environment with the
-required dependencies using [Poetry](https://python-poetry.org/).
+required dependencies using [uv](https://docs.astral.sh/uv/).

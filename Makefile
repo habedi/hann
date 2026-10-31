@@ -74,14 +74,17 @@ install-snap: ## Install Snap (for Debian-based systems)
 install-deps: ## Install development dependencies (for Debian-based systems)
 	$(ECHO) "Installing dependencies..."
 ifeq ($(CI),true)
-	echo "Skipping Go installation in CI"
+	echo "Skipping Go and uv installation in CI"
 else
 	echo "Installing Go and golangci-lint using Snap..."
 	$(MAKE) install-snap
 	sudo snap install go --classic
 	sudo snap install golangci-lint --classic
+	@if ! command -v uv >/dev/null 2>&1; then \
+		echo "Installing uv..."; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+	fi
 endif
-	sudo apt-get install -y python3-uv
 	$(GO) install github.com/google/pprof@latest
 	$(GO) mod download
 
