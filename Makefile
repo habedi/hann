@@ -15,7 +15,10 @@ REMOVABLE_FILES_AND_DIRS := *_prof *.pb.gz *.prof
 PACKAGES := $(shell $(GO) list ./... | grep -v $(EXAMPLES_DIR))
 
 # Adjust PATH if necessary (append /snap/bin if not present)
-PATH := $(if $(findstring /snap/bin,$(PATH)),$(PATH),/snap/bin:$(PATH))
+PATH := $(if $(findstring /snap/bin,$(PATH)),$(PATH),$(PATH):/snap/bin)
+
+# Prevent an inherited GOROOT from conflicting with the Go toolchain on PATH
+unexport GOROOT
 
 ####################################################################################################
 ## Shell Settings

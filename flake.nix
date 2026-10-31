@@ -35,6 +35,11 @@
 
             # Keep the test runs reproducible by default. Override it in the shell to change it.
             HANN_SEED = "33";
+
+            # Prevent an inherited GOROOT from conflicting with the Go toolchain provided by Nix.
+            shellHook = ''
+              unset GOROOT
+            '';
           };
         }
       );
