@@ -29,8 +29,7 @@ would like to work on or if it has already been resolved.
 ### Development Workflow
 
 > [!IMPORTANT]
-> If you're using an AI-assisted coding tool like Claude Code or Codex, make sure the AI follows the instructions in
-> the root [AGENTS.md](AGENTS.md) file.
+> If you're using an AI-assisted coding tool like Claude Code or Codex, make sure the AI follows the instructions in the [AGENTS.md](AGENTS.md) file.
 
 #### Prerequisites
 
@@ -53,14 +52,6 @@ sudo apt-get install -y golang-go make gcc ## or clang
 #### Running Linters
 
 - Use the `make lint` command to run the linters.
-
-### Cross-Compiling
-
-Hann uses cgo, so cross-compiling needs a C cross-toolchain. Zig provides one without any system setup:
-
-```shell
-CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux-gnu" go build ./...
-```
 
 #### See Available Commands
 

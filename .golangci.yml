@@ -18,8 +18,6 @@ linters:
   settings:
     gocritic:
       disabled-checks:
-        # M is the HNSW paper's name for the link budget, so parameters
-        # named M keep their capital.
         - captLocal
     govet:
       enable:
@@ -36,13 +34,9 @@ linters:
       - linters:
           - errcheck
         path: _test\.go
-      # Test-only constructors keep parameters for readability even when
-      # every current call passes the same value.
       - linters:
           - unparam
         path: _test\.go
-      # cgo preamble comments hold C declarations, which end in a
-      # semicolon, not a period.
       - linters:
           - godot
         source: ";$"
